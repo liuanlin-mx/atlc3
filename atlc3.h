@@ -47,6 +47,7 @@
 
 #define    UNDEFINED_ODDITY                                                  255
 
+
 #define METAL_ER  1e9 
 
 #define NUMBER_OF_DIELECTRICS_DEFINED 13
@@ -73,6 +74,15 @@
 
 #define MAX_ER 12.0
 
+#define Z_ODD_SINGLE_DIELECTRIC         1
+#define Z_EVEN_SINGLE_DIELECTRIC        2
+#define Z_ODD_MULTIPLE_DIELECTRIC       3
+#define Z_EVEN_MULTIPLE_DIELECTRIC      4
+
+#define DONT_CARE                          0
+#define ODD                                1
+#define EVEN                               2
+
 class atlc3
 {
 private:
@@ -82,14 +92,14 @@ private:
             : oddity(0)
             , cell_type(0)
             , er(0)
-            , voltage(0)
+            , v(0)
         {
         }
         
         std::uint8_t oddity;
         std::uint8_t cell_type;
-        double er;
-        double voltage;
+        float er;
+        float v;
     };
     
     struct pixels
@@ -99,12 +109,12 @@ private:
         int blue;         /* -1 V */
         int white;        /* Vacuum */
         int other_colour;  /* mix of red, green and blue  */
-        double epsilon;
+        float epsilon;
     };
     
     struct max_values
     {
-        double Ex_or_Ey_max, E_max, V_max, U_max, permittivity_max;
+        float Ex_or_Ey_max, E_max, V_max, U_max, permittivity_max;
     };
     
     typedef matrix<atlc3_node> matrix_atlc;
@@ -118,21 +128,27 @@ public:
     bool set_oddity_value();
     void do_fd_calculation();
     
-    double finite_difference_single_threaded();
-    void update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax, double **V_from, double **V_to);
-    double find_energy_per_metre(int w, int h);
-    double find_Ex(int i/*col*/, int j);
-    double find_Ey(int i, int j);
-    double find_E(int w, int h);
+    void setup_mask(bool ignore_dielectric);
+    float finite_difference_single_threaded();
+    void update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax);
+    void update_voltage_array_fast(int nmax);
+    
+    void swap_conductor_voltages();
+    
+    inline float find_energy_per_metre(int w, int h);
+    inline float find_Ex(int i/*col*/, int j);
+    inline float find_Ey(int i, int j);
+    float find_E(int w, int h);
     
     void cvt_rgb(matrix_rgb& img);
     void cvt_rgb_er(matrix_rgb& img);
     
     void print_data_for_two_conductor_lines();
-    void write_fields_for_two_conductor_lines();
+    void print_data_for_directional_couplers();
+    void write_fields(std::string name = "", std::int32_t zero_elementsQ = ZERO_ELEMENTS_FIRST);
     void find_maximum_values(struct max_values *maximum_values, int zero_elementsQ);
-    void calculate_colour_data(double x, double xmax, int w, int h, int image_type,
-unsigned char *red, unsigned char *green, unsigned char *blue, double image_fiddle_factor);
+    void calculate_colour_data(float x, float xmax, int w, int h, int image_type,
+unsigned char *red, unsigned char *green, unsigned char *blue, float image_fiddle_factor);
     
 private:
     matrix_atlc _mat;
@@ -145,20 +161,45 @@ private:
     
     std::string _inputfile_filename;
     std::uint8_t _verbose_level;
+    
+    struct max_values _maximum_values;
     bool _write_binary_field_imagesQ;
     bool _write_bitmap_field_imagesQ;
+    std::uint32_t _display;
     
+    float _r;
+    float _cutoff;
+    float _C_vacuum;
+    float _C;
+    float _L_vacuum; /* Same as L in *ALL* cases */
+    float _Zo_vacuum;  /* Standard formaul for Zo */
+    float _Er;
+    float _Zo;
+    float _Zodd;
+    float _Codd_vacuum;
+    float _Codd;
+    float _Lodd_vacuum; /* Same as L in *ALL* cases */
+    float _Zodd_vacuum;  /* Standard formaul for Zodd */
+    float _Er_odd;
     
-    double _cutoff;
-    double _C_vacuum;
-    double _C;
-    double _L_vacuum; /* Same as L in *ALL* cases */
-    double _Zo_vacuum;  /* Standard formaul for Zo */
-    double _Er;
-    double _Zo;
-    double _Zodd;
-    double _velocity;
-    double _velocity_factor;
+    float _Ceven;
+    float _Ceven_vacuum;
+    float _Leven_vacuum;
+    float _Er_even;
+    float _Zeven;
+    float _Zcomm;
+    
+    float _Zdiff;
+    float _Zeven_vacuum;
+    
+    float _velocity;
+    float _velocity_factor;
+    
+    float _velocity_odd;
+    float _velocity_factor_odd;
+    
+    float _velocity_even;
+    float _velocity_factor_even;
 };
 
 #endif

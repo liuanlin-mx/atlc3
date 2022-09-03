@@ -94,6 +94,10 @@ bool bitmap_read_file_headers(FILE *fp, std::uint32_t& offset, std::uint32_t& si
     height = bitmap_head.bi_height;
     offset = bitmap_file_head.bf_offs;
     size = bitmap_head.bi_size_im;
+    if (size == 0)
+    {
+        size = bitmap_file_head.bf_size - offset;
+    }
     if(size < 3 * (width) * (height))
     {
         fprintf(stderr,"Internal error in bitmap.c\n");

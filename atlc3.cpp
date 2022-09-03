@@ -1,18 +1,23 @@
 #include "atlc3.h"
 
 //static const char *names[] = {"Vacuum", "Air", "PTFE", "duroid_5880", "Polyethelene", "Polystyrene", "PVC", "Epoxy_resin", "FR4 PCB", "Fibreglass_PCB", "duroid_6006", "duroid_6010", "one_hundred"};
-static double Ers[] = {1.0, 1.0006, 2.1, 2.2, 2.33, 2.5, 3.3, 3.335, 3.7, 4.8, 6.15, 10.2, 100.0};
+static float Ers[] = {1.0, 1.0006, 2.1, 2.2, 2.33, 2.5, 3.3, 3.335, 3.7, 4.8, 6.15, 10.2, 100.0};
 static std::uint32_t colours[]={0xffffff, 0xffcaca, 0x8235ef, 0x8e8e8e, 0xff00ff, 0xffff00, 0xefcc1a, 0xbc7f60, 0xdff788, 0x1aefb3, 0x696969, 0xdcdcdc, 0xd5a04d};
 
 atlc3::atlc3()
     : _coupler(false)
     , _verbose_level(3)
 {
+    _r = 1.9;
     _cutoff = 0.0001;
     
     _write_binary_field_imagesQ = false;
-    _write_bitmap_field_imagesQ = false;
+    _write_bitmap_field_imagesQ = true;
     _inputfile_filename = "test.bmp";
+    
+    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f0ed8, 3.800000));
+    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f1004, 4.100000));
+    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f1108, 4.360000));
 }
 
 
@@ -65,7 +70,7 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
             if (colour_mixture == 0xff0000) /* +1V red */
             {
                 node.cell_type = CONDUCTOR_PLUS_ONE_V;
-                node.voltage = 1.0;
+                node.v = 1.0;
                 node.er = METAL_ER;
                 
                 conductor_found = true;
@@ -74,7 +79,7 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
             else if (colour_mixture == 0x00ff00) /* 0v green */
             {
                 node.cell_type = CONDUCTOR_ZERO_V;
-                node.voltage = 0.0;
+                node.v = 0.0;
                 node.er = METAL_ER;
                 
                 conductor_found = true;
@@ -83,7 +88,7 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
             else if (colour_mixture == 0x0000ff) /* -1V blue */
             {
                 node.cell_type = CONDUCTOR_MINUS_ONE_V;
-                node.voltage = -1.0;
+                node.v = -1.0;
                 node.er = METAL_ER;
                 
                 conductor_found = true;
@@ -102,7 +107,7 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
                 }
                 
                 node.cell_type = DIELECTRIC;
-                node.voltage = 0.0;
+                node.v = 0.0;
                 
                 for(std::uint32_t z = 0; z < NUMBER_OF_DIELECTRICS_DEFINED; ++z)
                 {
@@ -222,9 +227,9 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
         for (std::int32_t col = 0; col < _mat.cols(); col++)
         {
             atlc3_node& node = _mat.at(row, col);
-            if((node.voltage > 1.0) || (node.voltage < -1.0))
+            if((node.v > 1.0) || (node.v < -1.0))
             {
-                fprintf(stderr,"Sorry, something is wrong Vij[%d][%d]=%f in %s %d\n", col, row, node.voltage, __FILE__,__LINE__);
+                fprintf(stderr,"Sorry, something is wrong Vij[%d][%d]=%f in %s %d\n", col, row, node.v, __FILE__,__LINE__);
             }
         }
     }
@@ -316,16 +321,16 @@ bool atlc3::set_oddity_value()
             std::uint8_t ca = _mat.at(j - 1, i).cell_type;      /* Cell type above point (i,j) */
             std::uint8_t cb = _mat.at(j + 1, i).cell_type;      /* Cell type below point (i,j) */
 
-            double ERa = _mat.at(j - 1, i).er;
-            double ERb = _mat.at(j + 1, i).er;
-            double ERl = _mat.at(j, i - 1).er;
-            double ERr = _mat.at(j, i + 1).er;
-            //double er = _mat.at(j, i).er;
+            float ERa = _mat.at(j - 1, i).er;
+            float ERb = _mat.at(j + 1, i).er;
+            float ERl = _mat.at(j, i - 1).er;
+            float ERr = _mat.at(j, i + 1).er;
+            //float er = _mat.at(j, i).er;
 
 
             atlc3_node& node = _mat.at(j, i);
             
-            /* If the conductor is at a fixed voltage, it must stay there
+            /* If the conductor is at a fixed v, it must stay there
             so there is nothing to do with it */
 
             if (c == CONDUCTOR_ZERO_V)
@@ -413,15 +418,21 @@ bool atlc3::set_oddity_value()
 
 void atlc3::do_fd_calculation()
 {
-    double capacitance_old;
-    double capacitance;
-    double velocity_of_light_in_vacuum;
+    float capacitance_old;
+    float capacitance;
+    float velocity_of_light_in_vacuum;
     std::uint32_t count = 0;
   
-    double relative_permittivity;
-    double C_non_vacuum = 0;
+    float relative_permittivity;
+    float C_non_vacuum = 0;
+    float relative_permittivity_odd;
+    float relative_permittivity_even;
     
     (void)relative_permittivity;
+    (void)relative_permittivity_odd;
+    (void)relative_permittivity_even;
+    
+    velocity_of_light_in_vacuum = 1.0/(sqrt(MU_0 * EPSILON_0)); /* around 3x10^8 m/s */
     
     /* The following 10 lines are for a single dielectric 2 conductor line */
     if (!_coupler)
@@ -434,7 +445,8 @@ void atlc3::do_fd_calculation()
         capacitance = VERY_LARGE; /* Can be anything large */
         
         _dielectrics_to_consider_just_now = 1;
-
+        //setup_mask(true);
+        
         do /* Start a finite calculation */
         {
             capacitance_old = capacitance;
@@ -459,7 +471,6 @@ void atlc3::do_fd_calculation()
             
             _Zo = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
             _Zodd = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
-            velocity_of_light_in_vacuum = 1.0 / (sqrt(MU_0 * EPSILON_0)); /* around 3x10^8 m/s */
             _velocity = 1.0 / pow(_L_vacuum * _C, 0.5);
             _velocity_factor = _velocity / velocity_of_light_in_vacuum;
             relative_permittivity = sqrt(_velocity_factor); /* ??? XXXXXX */
@@ -480,7 +491,7 @@ void atlc3::do_fd_calculation()
         
         if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
         {
-            write_fields_for_two_conductor_lines();
+            write_fields();
         }
         
         if (_verbose_level == 0 && _er_bitmap.size() == 1)
@@ -533,19 +544,230 @@ void atlc3::do_fd_calculation()
         
             if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
             {
-                write_fields_for_two_conductor_lines();
+                write_fields();
             }
         }
     }
+    
+    else
+    {
+        /* The properties of a couplers will be computed in 2 or 4 stages
+        1) Compute the odd-mode impedance, assuming a vacuum dielectric, or
+        if there is just one dielectric, that one.
+
+        2) Compute the odd-mode impedance, taking into account the effect of
+        multiple dielectrics, IF NECESSARY
+
+        at this point, the negative voltages will be turned into positive ones. 
+
+        3) Compute the even-mode impedance, assuming a vacuum dielectric, or
+        if there is just one dielectric, that one.
+
+        4) Compute the even-mode impedance, taking into account the effect of
+        multiple dielectrics, IF NECESSARY  */
+
+        /* Stage 1 - compute the odd mode impedance assuming single dielectric */
+        
+        _display = Z_ODD_SINGLE_DIELECTRIC;
+        _dielectrics_to_consider_just_now = 1;
+
+        capacitance = VERY_LARGE; /* Can be anything large */
+        if(_verbose_level >= 2)
+        {
+            printf("Solving assuming a vacuum dielectric to compute the odd-mode impedance\n");
+        }
+
+        do /* Start a finite difference calculation */
+        {
+            capacitance_old = capacitance;
+            capacitance = finite_difference_single_threaded();
+        
+            _Codd_vacuum = capacitance;
+            _Codd = capacitance;
+            _Lodd_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
+
+            _Zodd_vacuum = sqrt(_Lodd_vacuum / _Codd_vacuum);  /* Standard formaul for Zodd */
+
+            if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
+            {
+                _Codd *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
+            }
+            else
+            {
+                _Er = 1.0;
+            }
+            
+            _Zodd = sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
+            
+            /* FPE trapdata->velocity_odd=1.0/pow(data->L_vacuum*data->Codd,0.5); */
+            _velocity_odd = 1.0 / pow(_Lodd_vacuum * _Codd, 0.5);
+            _velocity_factor_odd = _velocity_odd / velocity_of_light_in_vacuum;
+            relative_permittivity_odd = sqrt(_velocity_factor_odd); /* ??? XXXXXX */
+            _Er_odd = _Codd / _Codd_vacuum;
+            _Zdiff = 2.0 * _Zodd;
+            /* Print text if uses wants it */
+            if(_verbose_level >= 1)
+            {
+                print_data_for_directional_couplers();
+            }
+        } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+
+        /* display bitpamps/binary files if this is the last odd-mode computation */
+        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+        {
+            write_fields("odd.");
+        }
+        
+        /* Stage 2 - compute the odd-mode impedance taking into account other dielectrics IF NECESSARY */
+
+        if (_er_bitmap.size() >1)
+        {
+            if (_verbose_level >= 2)
+            {
+                printf("Now taking into account the permittivities of the different dielectrics to compute Zodd.\n");
+            }
+            
+            _display = Z_ODD_SINGLE_DIELECTRIC;
+            capacitance = VERY_LARGE; /* Can be anything large */
+
+            _dielectrics_to_consider_just_now = 2;
+        
+            do /* Start a finite calculation */
+            {
+                capacitance_old = capacitance;
+                
+                capacitance = finite_difference_single_threaded();
+                _Codd = capacitance;
+                _Zodd= sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
+                
+                _velocity_odd = 1.0 / pow(_L_vacuum * _C, 0.5);
+                _velocity_factor_odd = _velocity / velocity_of_light_in_vacuum;
+                relative_permittivity_odd = sqrt(_velocity_factor); /* ??? XXXXXX */
+                _Er_odd = _Codd / _Codd_vacuum;
+                _Zdiff = 2.0 * _Zodd;
+                if(_verbose_level >= 1)
+                {
+                    print_data_for_directional_couplers();
+                }
+            } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+
+            if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() != 1)
+            {
+                write_fields("odd.");
+            }
+        } /* end of stage 2 for couplers */
+
+        /* Stage 3 - compute the even-mode impedance assuming single dielectric */
+
+        /* Since we want the even mode impedance now, we swap all the -1V
+        metallic conductors for +1V */
+
+        swap_conductor_voltages();
+
+        _display = Z_EVEN_SINGLE_DIELECTRIC;
+        _dielectrics_to_consider_just_now = 1;
+        if(_verbose_level >= 2)
+        {
+            printf("Now assuming a vacuum dielectric to compute Zeven\n");
+        }
+        
+        capacitance = VERY_LARGE; /* Can be anything large */
+
+
+        do /* Start a finite difference calculation */
+        {
+            capacitance_old = capacitance;
+            capacitance = finite_difference_single_threaded();
+
+            _Ceven_vacuum = capacitance;
+            _Ceven = capacitance;
+            _Leven_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
+
+            _Zeven_vacuum = sqrt(_Leven_vacuum / _Ceven_vacuum);  /* Standard formaul for Zodd */
+
+            if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
+            {
+                _Ceven*=_found_this_dielectric;  /* Scaled by the single dielectric constant */
+                
+            }
+            else
+            {
+                _Er_even = 1.0;
+            }
+            _Zeven = sqrt(_Leven_vacuum / _Ceven);  /* Standard formula for Zo */
+            _velocity_even = 1.0 / pow(_Leven_vacuum * _Ceven, 0.5);
+            _velocity_factor_even = _velocity_even / velocity_of_light_in_vacuum;
+            relative_permittivity_even = sqrt(_velocity_factor_even); /* ??? XXXXXX */
+            _Er_even = _Ceven / _Ceven_vacuum;
+            _Zcomm = _Zeven / 2.0;
+            _Zo = sqrt(_Zodd * _Zeven);
+            if (_verbose_level >= 1)
+            {
+                print_data_for_directional_couplers();
+            }
+            /* display bitpamps/binary files if this is the last even-mode computation */
+        } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+
+        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+        {
+            write_fields("even.", DONT_ZERO_ELEMENTS);
+        }
+
+        capacitance = VERY_LARGE; /* Can be anything large */
+        /* Stage 4 - compute the even-mode impedance assuming multiple dielectrics IF NECESSARY */
+        if (_er_bitmap.size() > 1)
+        {
+            _dielectrics_to_consider_just_now=2;
+            if (_verbose_level >= 2)
+            {
+                printf("Now taking into account the permittivities of the different dielectrics to compute Zeven\n");
+            }
+            
+            do /* Start a finite calculation */
+            {
+                capacitance_old = capacitance;
+                capacitance = finite_difference_single_threaded();
+                
+                _Ceven = capacitance;
+                _Zeven = sqrt(_Leven_vacuum / _Ceven);  /* Standard formula for Zo */
+                _velocity_even = 1.0 / pow(_L_vacuum * _C, 0.5);
+                _velocity_factor_even = _velocity / velocity_of_light_in_vacuum;
+                relative_permittivity_even = sqrt(_velocity_factor); /* ??? XXXXXX */
+                _Er_even = _Ceven / _Ceven_vacuum;
+                _Zdiff = 2.0 * _Zodd;
+                _Zcomm = _Zeven / 2.0; 
+                _Zo = sqrt(_Zeven * _Zodd);
+                if (_verbose_level >= 1)
+                {
+                    print_data_for_directional_couplers();
+                }
+            } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+
+            if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
+            {
+                write_fields("even.", DONT_ZERO_ELEMENTS);
+            }
+        } /* end of stage 4 */
+        
+        /* Print the results if the verbose level was 0 (no -v flag(s) ). */
+        if (_verbose_level == 0)
+        {
+            /* We need to print the data. The next function will only print if 
+            the verbose_level is 1 or more, so I'll fix it at one. Then we print
+            the final results and exit. */
+            _verbose_level = 1;
+            _display = Z_EVEN_SINGLE_DIELECTRIC;
+            print_data_for_directional_couplers();
+        }
+    } /* end of if couplers */
 }
 
 
-
-double atlc3::finite_difference_single_threaded()
+float atlc3::finite_difference_single_threaded()
 {
     int number_of_iterations = 25;
-    double capacitance_per_metre;
-    double energy_per_metre;
+    float capacitance_per_metre;
+    float energy_per_metre;
 
     /* The following might not look very neat, with a whole load of code being 
     written twice, when it would be posible to make it easier to read if the 
@@ -562,21 +784,22 @@ double atlc3::finite_difference_single_threaded()
     parameter to update_voltage_array, the actual number done is 4x higher, as 
     each computation id done in 4 directions */
 
-    update_voltage_array(number_of_iterations, 0, _mat.cols() - 1, 0, _mat.rows() - 1, NULL, NULL);
+    //update_voltage_array(number_of_iterations, 0, _mat.cols() - 1, 0, _mat.rows() - 1);
+    update_voltage_array_fast(number_of_iterations);
+    //update_voltage_array_fast(number_of_iterations, 1, _mat.cols() - 2, 1, _mat.rows() - 2);
+    
+    //matrix_rgb img_er;
+    //cvt_rgb_er(img_er);
+    //cv::Mat cvimger(img_er.rows(), img_er.cols(), CV_8UC3, img_er.data());
+    //cv::imshow("imger", cvimger);
     
     //matrix_rgb img;
-    //matrix_rgb img_er;
-    
     //cvt_rgb(img);
-    //cvt_rgb_er(img_er);
-    
     //cv::Mat cvimg(img.rows(), img.cols(), CV_8UC3, img.data());
-    //cv::Mat cvimger(img_er.rows(), img_er.cols(), CV_8UC3, img_er.data());
     //cv::imshow("img", cvimg);
-    //cv::imshow("imger", cvimger);
     //cv::waitKey(10);
     
-    /* Once the voltage distribution is found, the energy in the field may be 
+    /* Once the v distribution is found, the energy in the field may be 
     found. This can be shown to be Energy = 0.5 * integral(E.D) dV, when 
     integrated over a volume V, and D.E is the vector dot product of E and
     D. 
@@ -588,7 +811,7 @@ double atlc3::finite_difference_single_threaded()
     for(std::int32_t i = 1; i < _mat.cols() - 1; ++i)
     {
         for(std::int32_t j = 1; j < _mat.rows() - 1; ++j)
-        { 
+        {
             energy_per_metre += find_energy_per_metre(i, j);
         }
     }
@@ -606,18 +829,18 @@ double atlc3::finite_difference_single_threaded()
 
 
 
-/* The following function updates the voltage on the matrix V_to given data about the 
+/* The following function updates the v on the matrix V_to given data about the 
 oddity of the location i,j and the voltages in the matrix V_from. It does this for n interations
 between rows jmin and jmax inclusive and between columns imain and imax inclusive */
 
-void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax, double **V_from, double **V_to)
+void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax)
 {
     int k, i, j, n;  
     unsigned char oddity_value;
-    double Va, Vb, Vl, Vr, ERa, ERb, ERl, ERr;
-    double Vnew, g;
+    float Va, Vb, Vl, Vr, ERa, ERb, ERl, ERr;
+    float Vnew, g;
     
-    double r = 1.9;
+    float r = 1.9;
     
     std::uint32_t width = _mat.cols();
     std::uint32_t height = _mat.rows();
@@ -628,83 +851,83 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
     }
     else
     {
-        g = 1;
+        g = 1.0;
     }
     
-    for(n=0; n  < nmax; ++n)
+    for(n = 0; n  < nmax; ++n)
     {
         for(k = 0; k < 4; ++k)
         {
-                for (j = (k==0 || k ==3) ? jmin : jmax; (k ==0 || k == 3)  ? j <= jmax : j >= jmin ; (k == 0 || k ==3) ?  j++ : j--)
-                {
-            for (i = k&1 ? imax : imin;   k&1 ? i >=imin : i <= imax ;  k&1 ? i-- : i++)
+            for (j = (k == 0 || k == 3) ? jmin : jmax; (k ==0 || k == 3)  ? j <= jmax : j >= jmin ; (k == 0 || k ==3) ?  j++ : j--)
             {
+                for (i = k&1 ? imax : imin;   k&1 ? i >=imin : i <= imax ;  k&1 ? i-- : i++)
+                {
                     atlc3_node& node = _mat.at(j, i);
                     oddity_value = node.oddity; //oddity[i][j];
+                        
 
                     if (oddity_value == CONDUCTOR_ZERO_V)
                     {
-                        node.voltage = 0.0;
+                        node.v = 0.0;
                     }
                     else if (oddity_value == CONDUCTOR_PLUS_ONE_V)
                     {
-                        node.voltage = 1.0;
+                        node.v = 1.0;
                     }
                     else if (oddity_value == CONDUCTOR_MINUS_ONE_V)
                     {
-                        node.voltage = -1.0;
+                        node.v = -1.0;
                     }
                     else if( oddity_value == TOP_LEFT_CORNER )
                     {  /* top left */
                         //Vnew = 0.5 * (V_from[1][0] + V_from[0][1]);
-                        Vnew = 0.5 * (_mat.at(0, 1).voltage + _mat.at(1, 0).voltage);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.5 * (_mat.at(0, 1).v + _mat.at(1, 0).v);
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == TOP_RIGHT_CORNER)
                     {
                         //Vnew = 0.5 * (V_from[width-2][0] + V_from[width-1][1]);         /* top right */
-                        Vnew = 0.5 * (_mat.at(0, width - 2).voltage + _mat.at(1, width - 1).voltage);   /* top right */
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.5 * (_mat.at(0, width - 2).v + _mat.at(1, width - 1).v);   /* top right */
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == BOTTOM_LEFT_CORNER)
                     {
                         //Vnew=0.5*(V_from[0][height-2]+V_from[1][height-1]);       /* bottom left */
-                        Vnew = 0.5 * (_mat.at(height - 2, 0).voltage + _mat.at(height - 1, 1).voltage); /* bottom left */
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.5 * (_mat.at(height - 2, 0).v + _mat.at(height - 1, 1).v); /* bottom left */
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == BOTTOM_RIGHT_CORNER)
                     {   
                         //Vnew=0.5*(V_from[width-2][height-1]+V_from[width-1][height-2]); /* bottom right */
-                        Vnew = 0.5 * (_mat.at(height - 1, width - 2).voltage + _mat.at(height - 2, width - 1).voltage); /* bottom right */
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.5 * (_mat.at(height - 1, width - 2).v + _mat.at(height - 2, width - 1).v); /* bottom right */
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     /* Now the sides */
                     else if (oddity_value == ORDINARY_POINT_LEFT_EDGE)
                     {  /* left hand side  */
                     
                         //Vnew=0.25*(V_from[0][j-1]+V_from[0][j+1] + 2*V_from[1][j]);
-                        Vnew = 0.25 * (_mat.at(j - 1, 0).voltage + _mat.at(j + 1, 0).voltage + 2 * _mat.at(j, 1).voltage);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.25 * (_mat.at(j - 1, 0).v + _mat.at(j + 1, 0).v + 2 * _mat.at(j, 1).v);
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == ORDINARY_POINT_RIGHT_EDGE)
                     {   /* right hand side */
                         //Vnew=0.25*(V_from[width-1][j+1]+V_from[width-1][j-1]+2*V_from[width-2][j]);
-                        Vnew = 0.25 * (_mat.at(j + 1, width - 1).voltage + _mat.at(j - 1, width - 1).voltage + 2 * _mat.at(j, width - 2).voltage);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.25 * (_mat.at(j + 1, width - 1).v + _mat.at(j - 1, width - 1).v + 2 * _mat.at(j, width - 2).v);
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == ORDINARY_POINT_TOP_EDGE)
                     { /* top row */ 
                         //Vnew=0.25*(V_from[i-1][0]+V_from[i+1][0]+2*V_from[i][1]);
-                        Vnew = 0.25 * (_mat.at(0, i - 1).voltage + _mat.at(0, i + 1).voltage + 2 * _mat.at(0, i).voltage);
-                        node.voltage = g * Vnew+(1 - g) * node.voltage;
+                        Vnew = 0.25 * (_mat.at(0, i - 1).v + _mat.at(0, i + 1).v + 2 * _mat.at(1, i).v);
+                        node.v = g * Vnew+(1 - g) * node.v;
                     }
                     else if (oddity_value == ORDINARY_POINT_BOTTOM_EDGE)
                     {   /* bottom row */ 
                         //Vnew=0.25*(V_from[i-1][height-1]+V_from[i+1][height-1]+2*V_from[i][height-2]);
-                        Vnew = 0.25 * (_mat.at(height - 1, i - 1).voltage + _mat.at(height - 1, i + 1).voltage + 2 * _mat.at(height - 2, i).voltage);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        Vnew = 0.25 * (_mat.at(height - 1, i - 1).v + _mat.at(height - 1, i + 1).v + 2 * _mat.at(height - 2, i).v);
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
-
                     else if (oddity_value == ORDINARY_INTERIOR_POINT
                         || (oddity_value >= DIFFERENT_DIELECTRIC_ABOVE_AND_RIGHT
                             && oddity_value < UNDEFINED_ODDITY
@@ -715,27 +938,28 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vl = V_from[i-1][j];
                         //Vr = V_from[i+1][j];
                         
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = (Va + Vb + Vl + Vr) / 4.0;
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
+                        //node.v = Vnew;
                     }
 
-                    /* I'm not sure the following equations, which compute the voltage  
+                    /* I'm not sure the following equations, which compute the v  
                     where there is a metal around are okay. One line of thought would 
                     say that the same equations as normal  i.e.
                         v_new=(v(i+1,j_+v(i-1,j)+v(i,j-1)+v(i,j+1))/4 should be used
                     but then since the electric field across the metal surface is zero,
                     the equation that was used to derrive  that equation is not valid.
 
-                    Another thought of mine is that voltage near a metal will be more affected
+                    Another thought of mine is that v near a metal will be more affected
                     by the metal than the dielectric, since the nearest part of the metal is at
-                    at the same voltage as the node, whereas for a dielectric is less so. Hence
+                    at the same v as the node, whereas for a dielectric is less so. Hence
                     the following seems a sensible solution. Since the metal will have twice 
-                    the effect of a dielectric, the voltage at i,j should be weighted such
+                    the effect of a dielectric, the v at i,j should be weighted such
                     that its effect is more strongly affected by the metal. This seems to 
                     produce reasonably accurate results, but whether this is chance or not
                     I don't know. */
@@ -747,13 +971,13 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
 
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
                         
                         Vnew = 0.25 * (4 * Va / 3 + 2 * Vb / 3 + Vl + Vr);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == METAL_BELOW)
                     {   
@@ -761,13 +985,13 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
         
                         Vnew = 0.25 * (4 * Vb / 3 + 2 * Va / 3 + Vl + Vr);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == METAL_LEFT)
                     {
@@ -775,13 +999,13 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vl / 3 + 2 * Vr / 3 + Va + Vb);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == METAL_RIGHT)
                     {
@@ -789,13 +1013,13 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vr / 3 + 2 * Vl / 3 + Va + Vb);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
                     else if (oddity_value == METAL_ABOVE_AND_RIGHT)
                     {
@@ -803,75 +1027,75 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vr / 3 + 4 * Va / 3 + 2 * Vl / 3 + 2 * Vb / 3);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
-                    else if( oddity_value == METAL_ABOVE_AND_LEFT )
+                    else if (oddity_value == METAL_ABOVE_AND_LEFT)
                     {
                         //Va=V_from[i][j-1]; 
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vl / 3 + 4 * Va / 3 + 2 * Vr / 3 + 2 * Vb / 3);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
-                    else if( oddity_value == METAL_BELOW_AND_LEFT )
+                    else if (oddity_value == METAL_BELOW_AND_LEFT)
                     {
                         //Va=V_from[i][j-1]; 
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vl / 3 + 4 * Vb / 3 + 2 * Vr / 3 + 2 * Va / 3);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
-                    else if( oddity_value == METAL_BELOW_AND_RIGHT )
+                    else if (oddity_value == METAL_BELOW_AND_RIGHT)
                     {
                         //Va=V_from[i][j-1]; 
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         Vnew = 0.25 * (4 * Vb / 3 + 4 * Vr / 3 + 2 * Va / 3 + 2 * Vl / 3);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
                     }
 
                     /* Again, when there is a change of permittivity, my equations may
                     (probably are wrong). My logic is that if there's and RF field,
                     the impedance is inversly proportional to Er. So if the material
                     above a node is of a higher permittivity, then the 
-                    voltage will be closer to that of the node above, becuase of this.
+                    v will be closer to that of the node above, becuase of this.
                     The same applies for other directions of change in Er. */
 
 
-                    else if(_dielectrics_to_consider_just_now > 1)
+                    else if (_dielectrics_to_consider_just_now > 1)
                     {
                         //Va=V_from[i][j-1]; 
                         //Vb=V_from[i][j+1];
                         //Vl=V_from[i-1][j];
                         //Vr=V_from[i+1][j];
-                        Va = _mat.at(j - 1, i).voltage;
-                        Vb = _mat.at(j + 1, i).voltage;
-                        Vl = _mat.at(j, i - 1).voltage;
-                        Vr = _mat.at(j, i + 1).voltage;
+                        Va = _mat.at(j - 1, i).v;
+                        Vb = _mat.at(j + 1, i).v;
+                        Vl = _mat.at(j, i - 1).v;
+                        Vr = _mat.at(j, i + 1).v;
 
                         //ERa = Er[i][j-1]; 
                         //ERb = Er[i][j+1];
@@ -883,7 +1107,7 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
                         ERr = _mat.at(j, i + 1).er;
 
                         Vnew = (Va * ERa + Vb * ERb + Vl * ERl + Vr * ERr) / (ERa + ERb + ERl + ERr);
-                        node.voltage = g * Vnew + (1 - g) * node.voltage;
+                        node.v = g * Vnew + (1 - g) * node.v;
 
                     }
                     else if ((_dielectrics_to_consider_just_now == 1 && oddity_value == UNDEFINED_ODDITY) 
@@ -901,18 +1125,278 @@ void atlc3::update_voltage_array(int nmax, int imin, int imax, int jmin, int jma
 }
 
 
-double atlc3::find_energy_per_metre(int w, int h)
+
+void atlc3::update_voltage_array_fast(int nmax)
 {
-    double energy_per_metre = 0;
-    double Ex;
-    double Ey;
+    std::uint8_t oddity_value;
+    float Va, Vb, Vl, Vr, ERa, ERb, ERl, ERr;
+    float Vnew, g;
+    
+    
+    std::int32_t width = _mat.cols();
+    std::int32_t height = _mat.rows();
+    
+    if (_dielectrics_to_consider_just_now == 1)
+    {
+        g = _r;
+    }
+    else
+    {
+        g = 1.0;
+    }
+    
+    
+    for(std::int32_t n = 0; n  < nmax; ++n)
+    {
+        for (std::int32_t j = 0; j < height; j++)
+        {
+            for (std::int32_t i = 0; i < width; i++)
+            {
+                atlc3_node& node = _mat.at(j, i);
+                oddity_value = node.oddity;
+                    
+
+                if (oddity_value == CONDUCTOR_ZERO_V)
+                {
+                    node.v = 0.0;
+                }
+                else if (oddity_value == CONDUCTOR_PLUS_ONE_V)
+                {
+                    node.v = 1.0;
+                }
+                else if (oddity_value == CONDUCTOR_MINUS_ONE_V)
+                {
+                    node.v = -1.0;
+                }
+                else if( oddity_value == TOP_LEFT_CORNER )
+                {  /* top left */
+                    Vnew = 0.5 * (_mat.at(0, 1).v + _mat.at(1, 0).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == TOP_RIGHT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(0, width - 2).v + _mat.at(1, width - 1).v);   /* top right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_LEFT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(height - 2, 0).v + _mat.at(height - 1, 1).v); /* bottom left */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_RIGHT_CORNER)
+                {   
+                    Vnew = 0.5 * (_mat.at(height - 1, width - 2).v + _mat.at(height - 2, width - 1).v); /* bottom right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                /* Now the sides */
+                else if (oddity_value == ORDINARY_POINT_LEFT_EDGE)
+                {  /* left hand side  */
+                    Vnew = 0.25 * (_mat.at(j - 1, 0).v + _mat.at(j + 1, 0).v + 2 * _mat.at(j, 1).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_RIGHT_EDGE)
+                {   /* right hand side */
+                    Vnew = 0.25 * (_mat.at(j + 1, width - 1).v + _mat.at(j - 1, width - 1).v + 2 * _mat.at(j, width - 2).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_TOP_EDGE)
+                { /* top row */ 
+                    Vnew = 0.25 * (_mat.at(0, i - 1).v + _mat.at(0, i + 1).v + 2 * _mat.at(1, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_BOTTOM_EDGE)
+                {   /* bottom row */ 
+                    Vnew = 0.25 * (_mat.at(height - 1, i - 1).v + _mat.at(height - 1, i + 1).v + 2 * _mat.at(height - 2, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_INTERIOR_POINT
+                    || (oddity_value >= DIFFERENT_DIELECTRIC_ABOVE_AND_RIGHT
+                        && oddity_value < UNDEFINED_ODDITY
+                        && _dielectrics_to_consider_just_now == 1))
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = (Va + Vb + Vl + Vr) / 4.0;
+                    node.v = g * Vnew + ((float)1 - g) * node.v;
+                }
+
+                /* I'm not sure the following equations, which compute the v  
+                where there is a metal around are okay. One line of thought would 
+                say that the same equations as normal  i.e.
+                    v_new=(v(i+1,j_+v(i-1,j)+v(i,j-1)+v(i,j+1))/4 should be used
+                but then since the electric field across the metal surface is zero,
+                the equation that was used to derrive  that equation is not valid.
+
+                Another thought of mine is that v near a metal will be more affected
+                by the metal than the dielectric, since the nearest part of the metal is at
+                at the same v as the node, whereas for a dielectric is less so. Hence
+                the following seems a sensible solution. Since the metal will have twice 
+                the effect of a dielectric, the v at i,j should be weighted such
+                that its effect is more strongly affected by the metal. This seems to 
+                produce reasonably accurate results, but whether this is chance or not
+                I don't know. */
+
+                else if (oddity_value == METAL_ABOVE)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    Vnew = 0.25 * (4 * Va / 3 + 2 * Vb / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+        
+                    Vnew = 0.25 * (4 * Vb / 3 + 2 * Va / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 2 * Vr / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 2 * Vl / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 4 * Va / 3 + 2 * Vl / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Va / 3 + 2 * Vr / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Vb / 3 + 2 * Vr / 3 + 2 * Va / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vb / 3 + 4 * Vr / 3 + 2 * Va / 3 + 2 * Vl / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+
+                /* Again, when there is a change of permittivity, my equations may
+                (probably are wrong). My logic is that if there's and RF field,
+                the impedance is inversly proportional to Er. So if the material
+                above a node is of a higher permittivity, then the 
+                v will be closer to that of the node above, becuase of this.
+                The same applies for other directions of change in Er. */
+
+
+                else if (_dielectrics_to_consider_just_now > 1)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    ERa = _mat.at(j - 1, i).er;
+                    ERb = _mat.at(j + 1, i).er;
+                    ERl = _mat.at(j, i - 1).er;
+                    ERr = _mat.at(j, i + 1).er;
+
+                    Vnew = (Va * ERa + Vb * ERb + Vl * ERl + Vr * ERr) / (ERa + ERb + ERl + ERr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+
+                }
+                else if ((_dielectrics_to_consider_just_now == 1 && oddity_value == UNDEFINED_ODDITY) 
+                        || (_dielectrics_to_consider_just_now > 1))
+                {
+                    fprintf(stderr,"Internal error in update_voltage_array.c\n");
+                    fprintf(stderr,"i=%d j=%d oddity[%d][%d]=%d\n", i, j, i,j, oddity_value);
+                    //exit(INTERNAL_ERROR);
+                    return;
+                } /* end if if an internal error */
+            } /* end of j loop */
+        }
+    }
+}
+
+
+void atlc3::swap_conductor_voltages()
+{
+    
+    for (std::int32_t row = 0; row < _mat.rows(); row++)
+    {
+        for (std::int32_t col = 0; col < _mat.cols(); col++)
+        {
+            atlc3_node& node = _mat.at(row, col);
+            
+            if (node.oddity == CONDUCTOR_MINUS_ONE_V)
+            {
+                node.v = 1.0;
+                node.oddity = CONDUCTOR_PLUS_ONE_V;
+            }
+            else if (node.oddity == CONDUCTOR_ZERO_V)
+            {
+            }
+            else if (node.oddity == CONDUCTOR_PLUS_ONE_V)
+            {
+            }
+            else
+            {
+                node.v = 0.0;
+            }
+        }
+    }
+}
+
+
+float atlc3::find_energy_per_metre(int w, int h)
+{
+    float energy_per_metre;
+    float Ex;
+    float Ey;
 
     Ex = find_Ex(w, h);
     Ey = find_Ey(w, h);
-    energy_per_metre += 0.5 * EPSILON_0 * (Ex * Ex + Ey * Ey);
-    //if (Ex < -0.01 || Ey < -0.01)
-        //printf("w:%d h:%d Ex:%f Ey:%f\n", w, h, Ex, Ey);
-    if(_dielectrics_to_consider_just_now > 1)
+    energy_per_metre = (float)(0.5 * EPSILON_0) * (Ex * Ex + Ey * Ey);
+    if (_dielectrics_to_consider_just_now > 1)
     {
         energy_per_metre *= _mat.at(h, w).er; //Er[w][h]; /* second run, energy proportional to Er */
     }
@@ -920,9 +1404,9 @@ double atlc3::find_energy_per_metre(int w, int h)
 }
 
 
-double atlc3::find_Ex(int i/*col*/, int j) 
+float atlc3::find_Ex(int i/*col*/, int j) 
 {
-    double Ex = 0.0;
+    float Ex = 0.0;
     std::uint8_t odd = _mat.at(j, i).oddity; //oddity[i][j];
     std::uint32_t width = _mat.cols();
     
@@ -931,47 +1415,47 @@ double atlc3::find_Ex(int i/*col*/, int j)
         if (odd == TOP_LEFT_CORNER || odd == BOTTOM_LEFT_CORNER)
         {
             //Ex = Vij[0][j] - Vij[1][j];
-            Ex = _mat.at(j, 0).voltage - _mat.at(j, 1).voltage;
+            Ex = _mat.at(j, 0).v - _mat.at(j, 1).v;
         }
         else if (odd == TOP_RIGHT_CORNER || odd == BOTTOM_RIGHT_CORNER) 
         {
             //Ex = Vij[width-2][0]-Vij[width-1][0];
-            Ex = _mat.at(0, width - 2).voltage - _mat.at(0, width - 1).voltage;
+            Ex = _mat.at(0, width - 2).v - _mat.at(0, width - 1).v;
         }
         else if (odd == ORDINARY_POINT_TOP_EDGE || odd == ORDINARY_POINT_BOTTOM_EDGE) 
         {
             //Ex = 0.5*(Vij[i-1][j]-Vij[i+1][j]);
-            Ex = 0.5 * (_mat.at(j, i - 1).voltage - _mat.at(j, i + 1).voltage);
+            Ex = 0.5 * (_mat.at(j, i - 1).v - _mat.at(j, i + 1).v);
         }
         else if (odd == ORDINARY_POINT_LEFT_EDGE) 
         {
             //Ex = (Vij[i][j]-Vij[i+1][j]);
-            Ex = _mat.at(j, i).voltage - _mat.at(j, i + 1).voltage;
+            Ex = _mat.at(j, i).v - _mat.at(j, i + 1).v;
         }
         else if (odd == ORDINARY_POINT_RIGHT_EDGE) 
         {
             //Ex = (Vij[width-2][j]-Vij[width-1][j]);
-            Ex = _mat.at(j, width - 2).voltage - _mat.at(j, width - 1).voltage;
+            Ex = _mat.at(j, width - 2).v - _mat.at(j, width - 1).v;
         }
-        else if(odd == METAL_LEFT || odd == METAL_BELOW_AND_LEFT || odd == METAL_ABOVE_AND_LEFT)
+        else if (odd == METAL_LEFT || odd == METAL_BELOW_AND_LEFT || odd == METAL_ABOVE_AND_LEFT)
         {
             //Ex = Vij[i][j]-Vij[i+1][j];
-            Ex = _mat.at(j, i).voltage - _mat.at(j, i + 1).voltage;
+            Ex = _mat.at(j, i).v - _mat.at(j, i + 1).v;
         }
-        else if(odd == METAL_RIGHT || odd == METAL_ABOVE_AND_RIGHT || odd ==METAL_BELOW_AND_RIGHT)
+        else if (odd == METAL_RIGHT || odd == METAL_ABOVE_AND_RIGHT || odd ==METAL_BELOW_AND_RIGHT)
         {
             //Ex = Vij[i-1][j]-Vij[i][j];
-            Ex = _mat.at(j, i - 1).voltage - _mat.at(j, i).voltage;
+            Ex = _mat.at(j, i - 1).v - _mat.at(j, i).v;
         }
         else if (odd == ORDINARY_INTERIOR_POINT || odd == METAL_ABOVE || odd == METAL_BELOW)
         {
             //Ex = 0.5*(Vij[i-1][j]-Vij[i+1][j]);
-            Ex = 0.5 * (_mat.at(j, i - 1).voltage - _mat.at(j, i + 1).voltage);
+            Ex = 0.5 * (_mat.at(j, i - 1).v - _mat.at(j, i + 1).v);
         }
         else if (odd >= DIFFERENT_DIELECTRIC_ABOVE_AND_RIGHT && odd < UNDEFINED_ODDITY  )
         {
             //Ex = 0.5*(Vij[i-1][j]-Vij[i+1][j]);
-            Ex = 0.5 * (_mat.at(j, i - 1).voltage - _mat.at(j, i + 1).voltage);
+            Ex = 0.5 * (_mat.at(j, i - 1).v - _mat.at(j, i + 1).v);
         }
         else
         {
@@ -982,11 +1466,11 @@ double atlc3::find_Ex(int i/*col*/, int j)
     return (Ex);
 }
 
-double atlc3::find_Ey(int i, int j)
+float atlc3::find_Ey(int i, int j)
 {
-    double Ey = 0.0;
+    float Ey = 0.0;
     std::uint8_t odd = _mat.at(j, i).oddity; //oddity[i][j];
-    std::uint32_t height = _mat.rows();
+    std::int32_t height = _mat.rows();
     
     if (odd > CONDUCTOR_FLOATING)
     {
@@ -994,51 +1478,51 @@ double atlc3::find_Ey(int i, int j)
         if (odd == TOP_LEFT_CORNER || odd == TOP_RIGHT_CORNER) 
         {
             //Ey=Vij[i][1]-Vij[i][0];
-            Ey = _mat.at(1, i).voltage - _mat.at(0, i).voltage;
+            Ey = _mat.at(1, i).v - _mat.at(0, i).v;
         }
 
         else if (odd == BOTTOM_LEFT_CORNER || odd == BOTTOM_RIGHT_CORNER) 
         {
             //Ey=Vij[i][height-1]-Vij[i][height-2];
-            Ey = _mat.at(height - 1, i).voltage - _mat.at(height - 2, i).voltage;
+            Ey = _mat.at(height - 1, i).v - _mat.at(height - 2, i).v;
         }
 
         else if (odd == ORDINARY_POINT_LEFT_EDGE || odd == ORDINARY_POINT_RIGHT_EDGE) 
         {
             //Ey=0.5*(Vij[i][j+1]-Vij[i][j-1]);
-            Ey = 0.5 * (_mat.at(j + 1, i).voltage - _mat.at(j - 1, i).voltage);
+            Ey = 0.5 * (_mat.at(j + 1, i).v - _mat.at(j - 1, i).v);
         }
 
         else if (odd == ORDINARY_POINT_BOTTOM_EDGE) 
         {
             //Ey=Vij[i][j+1]-Vij[i][j];
-            Ey = _mat.at(j + 1, i).voltage - _mat.at(j, i).voltage;
-            //Ey = 0 - _mat.at(j, i).voltage;
+            Ey = _mat.at(j + 1, i).v - _mat.at(j, i).v;
+            //Ey = 0 - _mat.at(j, i).v;
         }
 
         else if (odd == ORDINARY_POINT_TOP_EDGE)
         {
             //Ey=Vij[i][j]-Vij[i][j-1];
-            Ey = _mat.at(j, i).voltage - _mat.at(j - 1, i).voltage;
-            //Ey = _mat.at(j, i).voltage;
+            Ey = _mat.at(j, i).v - _mat.at(j - 1, i).v;
+            //Ey = _mat.at(j, i).v;
         }
 
         else if (odd == METAL_ABOVE || odd == METAL_ABOVE_AND_LEFT || odd == METAL_ABOVE_AND_RIGHT)
         {
             //Ey=Vij[i][j+1]-Vij[i][j];
-            Ey = _mat.at(j + 1, i).voltage - _mat.at(j, i).voltage;
+            Ey = _mat.at(j + 1, i).v - _mat.at(j, i).v;
         }
 
         else if (odd == METAL_BELOW || odd == METAL_BELOW_AND_LEFT || odd == METAL_BELOW_AND_RIGHT)
         {
             //Ey=Vij[i][j]-Vij[i][j-1];
-            Ey = _mat.at(j, i).voltage - _mat.at(j - 1, i).voltage;
+            Ey = _mat.at(j, i).v - _mat.at(j - 1, i).v;
         }
 
         else if(odd >= DIFFERENT_DIELECTRIC_LOCALLY || odd == ORDINARY_INTERIOR_POINT || odd == METAL_RIGHT || odd == METAL_LEFT)
         {
             //Ey=0.5*(Vij[i][j+1]-Vij[i][j-1]);
-            Ey = 0.5 * (_mat.at(j + 1, i).voltage - _mat.at(j - 1, i).voltage);
+            Ey = 0.5 * (_mat.at(j + 1, i).v - _mat.at(j - 1, i).v);
         }
         else
         {
@@ -1046,12 +1530,12 @@ double atlc3::find_Ey(int i, int j)
             //exit_with_msg_and_exit_code("Internal error in find_Ey",INTERNAL_ERROR);
         }
     }
-    return(Ey);
+    return (Ey);
 }
 
-double atlc3::find_E(int w, int h)
+float atlc3::find_E(int w, int h)
 {
-    double Ex, Ey, E;
+    float Ex, Ey, E;
     Ex = find_Ex(w, h);
     Ey = find_Ey(w, h);
     E = sqrt(Ex * Ex + Ey * Ey);
@@ -1068,9 +1552,9 @@ void atlc3::cvt_rgb(matrix_rgb& img)
     {
         for (std::int32_t col = 0; col < _mat.cols(); col++)
         {
-            img.at(row, col).r = _mat.at(row, col).voltage * 255.;
-            img.at(row, col).g = _mat.at(row, col).voltage * 255.;
-            img.at(row, col).b = _mat.at(row, col).voltage * 255.;
+            img.at(row, col).r = _mat.at(row, col).v * 255.;
+            img.at(row, col).g = _mat.at(row, col).v * 255.;
+            img.at(row, col).b = _mat.at(row, col).v * 255.;
         }
     }
 }
@@ -1113,6 +1597,44 @@ void atlc3::print_data_for_two_conductor_lines()
 
 
 
+/* The following simple function just prints data into a file, or if
+fp-stout, to the screen. Depending on whether the dielectric is mixed or
+not, it is or is not possible to quote a value for Er. If Er is passed
+as a mumber < 0, this function interprets that as meaning that the
+dielectric is mixed, and says 'Er= MIXED' */
+
+void atlc3::print_data_for_directional_couplers()
+{
+    if (_display == Z_ODD_SINGLE_DIELECTRIC)
+    {
+        if(_verbose_level == 1)
+        {
+            printf("%s 3 Er_odd= %6.2f Er_even= %s Zodd= %7.3f Zeven= %s Zo= %s Zdiff= %6.2f Zcomm= %s Ohms VERSION=%s\n",
+                _inputfile_filename.c_str(), _Er_odd, "??????", _Zodd, "??????","??????", _Zdiff, "??????", PACKAGE_VERSION);
+        }
+        else if (_verbose_level >= 2)
+        {
+            printf("%s 3 Er_odd= %6.2f Er_even= %s Zodd= %7.3f Zeven= %s Zo= %s Zdiff= %6.2f Zcomm= %s Ohms VERSION=%s\n",
+                _inputfile_filename.c_str(), _Er_odd, "??????", _Zodd, "??????","??????", _Zdiff, "??????", PACKAGE_VERSION);
+        }
+    }
+    else if (_display == Z_EVEN_SINGLE_DIELECTRIC)
+    {
+        if(_verbose_level == 1)
+        {
+            printf("%s 3 Er_odd= %7.3f Er_even= %7.3f Zodd= %7.3f Zeven= %7.3f Zo= %7.3f Zdiff= %7.3f Zcomm= %7.3f Ohms "
+                                "Lodd= %7.3f nH/m Leven= %7.3f nH/m Codd= %7.3f pF/m  Ceven= %7.3f pF/m  VERSION=%s\n",
+                                _inputfile_filename.c_str(), _Er_odd, _Er_even, _Zodd, _Zeven, _Zo, _Zdiff, _Zcomm,
+                                _Lodd_vacuum * 1e9, _Leven_vacuum * 1e9, _Codd * 1e12, _Ceven * 1e12, PACKAGE_VERSION);
+        }
+        else if (_verbose_level >= 2)
+        {
+            printf("%s 3 Er_odd= %7.3f Er_even= %7.3f Zodd= %7.3f Zeven= %7.3f Zo= %7.3f Zdiff= %7.3f Zcomm= %7.3f Ohms VERSION=%s\n",
+                _inputfile_filename.c_str(), _Er_odd, _Er_even, _Zodd, _Zeven, _Zo, _Zdiff, _Zcomm, PACKAGE_VERSION);
+        }
+    }
+}
+
 
 
 /* Write the following files, assuming an input of example.bmp 
@@ -1141,25 +1663,24 @@ eexample.U.bin  binary file, with just the energy (U=CV^2).
 
 */
 
-extern double image_fiddle_factor;
+extern float image_fiddle_factor;
 
 
-void atlc3::write_fields_for_two_conductor_lines()
+void atlc3::write_fields(std::string name, std::int32_t zero_elementsQ)
 {
     FILE *Ex_bin_fp = NULL, *Ey_bin_fp = NULL;
     FILE *E_bin_fp = NULL, *V_bin_fp, *U_bin_fp = NULL;
     
 #ifdef WRITE_ODDITY_DATA
     FILE *oddity_bmp_fp=NULL;
-    double odd;
+    float odd;
 #endif
     unsigned char r, g, b;
   
     FILE *permittivity_bin_fp = NULL;
   
-    struct max_values maximum_values;
     int w, h;
-    double V, E, Ex, Ey, U;
+    float V, E, Ex, Ey, U;
 
     matrix_rgb image_data_Ex; 
     matrix_rgb image_data_Ey;
@@ -1174,18 +1695,18 @@ void atlc3::write_fields_for_two_conductor_lines()
 
     if(_write_binary_field_imagesQ)
     {
-        Ex_bin_fp = fopen((_inputfile_filename + ".Ex.bin").c_str(), "wb");
-        Ey_bin_fp = fopen((_inputfile_filename + ".Ey.bin").c_str(), "wb");
-        E_bin_fp = fopen((_inputfile_filename + ".E.bin").c_str(), "wb");
-        V_bin_fp = fopen((_inputfile_filename + ".V.bin").c_str(), "wb");
-        U_bin_fp = fopen((_inputfile_filename + ".U.bin").c_str(), "wb");
+        Ex_bin_fp = fopen((_inputfile_filename + ".Ex." + name + "bin").c_str(), "wb");
+        Ey_bin_fp = fopen((_inputfile_filename + ".Ey." + name + "bin").c_str(), "wb");
+        E_bin_fp = fopen((_inputfile_filename + ".E." + name + "bin").c_str(), "wb");
+        V_bin_fp = fopen((_inputfile_filename + ".V." + name + "bin").c_str(), "wb");
+        U_bin_fp = fopen((_inputfile_filename + ".U." + name + "bin").c_str(), "wb");
         permittivity_bin_fp = fopen((_inputfile_filename + ".Er.bin").c_str(), "wb");
         
         for (std::int32_t row = _mat.rows() - 1; row >= 0; row++)
         {
             for (std::int32_t col = 0; col < _mat.cols(); col++)
             {
-                V = _mat.at(row, col).voltage;
+                V = _mat.at(row, col).v;
                 
                 Ex = find_Ex(col, row);
                 Ey = find_Ey(col, row);
@@ -1193,7 +1714,7 @@ void atlc3::write_fields_for_two_conductor_lines()
                 U = find_energy_per_metre(col, row);
                 if (Ex_bin_fp)
                 {
-                    if (fwrite((void *)&Ex, sizeof(double), 1, Ex_bin_fp) != 1)
+                    if (fwrite((void *)&Ex, sizeof(float), 1, Ex_bin_fp) != 1)
                     {
                         printf("Error#1: Failed to write binary file in atlc3.c");
                     }
@@ -1201,7 +1722,7 @@ void atlc3::write_fields_for_two_conductor_lines()
                 
                 if (Ey_bin_fp)
                 {
-                    if (fwrite((void *)&Ey, sizeof(double), 1, Ey_bin_fp) != 1)
+                    if (fwrite((void *)&Ey, sizeof(float), 1, Ey_bin_fp) != 1)
                     {
                         printf("Error#2: Failed to write binary file in atlc3.c");
                     }
@@ -1209,7 +1730,7 @@ void atlc3::write_fields_for_two_conductor_lines()
                 
                 if (E_bin_fp)
                 {
-                    if (fwrite((void *)&E, sizeof(double), 1, E_bin_fp) != 1)
+                    if (fwrite((void *)&E, sizeof(float), 1, E_bin_fp) != 1)
                     {
                         printf("Error#3: Failed to write binary file in atlc3.c");
                     }
@@ -1217,7 +1738,7 @@ void atlc3::write_fields_for_two_conductor_lines()
                 
                 if (V_bin_fp)
                 {
-                    if (fwrite((void *)&V, sizeof(double), 1, V_bin_fp) != 1)
+                    if (fwrite((void *)&V, sizeof(float), 1, V_bin_fp) != 1)
                     {
                         printf("Error#4: Failed to write binary file in atlc3.c");
                     }
@@ -1225,7 +1746,7 @@ void atlc3::write_fields_for_two_conductor_lines()
                 
                 if (U_bin_fp)
                 {
-                    if (fwrite((void *)&U, sizeof(double), 1, U_bin_fp) != 1)
+                    if (fwrite((void *)&U, sizeof(float), 1, U_bin_fp) != 1)
                     {
                         printf("Error#5: Failed to write binary file in atlc3.c");
                     }
@@ -1233,8 +1754,8 @@ void atlc3::write_fields_for_two_conductor_lines()
                 
                 if (permittivity_bin_fp)
                 {
-                    double Er = _mat.at(row, col).er;
-                    if (fwrite((void *)&Er, sizeof(double), 1, permittivity_bin_fp) != 1)
+                    float Er = _mat.at(row, col).er;
+                    if (fwrite((void *)&Er, sizeof(float), 1, permittivity_bin_fp) != 1)
                     {
                         printf("Error#6: Failed to write binary file in atlc3.c");
                     }
@@ -1271,7 +1792,7 @@ void atlc3::write_fields_for_two_conductor_lines()
 
     if (_write_bitmap_field_imagesQ)
     {
-        find_maximum_values(&maximum_values, ZERO_ELEMENTS_FIRST); /* sets stucture maximum_values */
+        find_maximum_values(&_maximum_values, zero_elementsQ); /* sets stucture maximum_values */
 
         /* Allocate ram to store the bitmaps before they are written to disk */
         image_data_Ex.create(_mat.rows(), _mat.cols());
@@ -1293,39 +1814,40 @@ void atlc3::write_fields_for_two_conductor_lines()
                 Ey = find_Ey(w, h);
                 E = find_E(w, h); 
                 U = find_energy_per_metre(w, h);
-                calculate_colour_data(Ex, maximum_values.Ex_or_Ey_max, w, h, COLOUR, &r,&g,&b, IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(Ex, _maximum_values.Ex_or_Ey_max, w, h, COLOUR, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_Ex.at(h, w).r = r;  image_data_Ex.at(h, w).g = g; image_data_Ex.at(h, w).b = b;
                 
-                calculate_colour_data(Ey, maximum_values.Ex_or_Ey_max, w, h, COLOUR,&r,&g,&b,IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(Ey, _maximum_values.Ex_or_Ey_max, w, h, COLOUR, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_Ey.at(h, w).r = r;  image_data_Ey.at(h, w).g = g; image_data_Ey.at(h, w).b = b;
                 
-                calculate_colour_data(E, maximum_values.E_max, w, h, MONOCHROME,&r,&g,&b,IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(E, _maximum_values.E_max, w, h, MONOCHROME, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_E.at(h, w).r = r;  image_data_E.at(h, w).g = g; image_data_E.at(h, w).b = b;
                 
-                calculate_colour_data(U, maximum_values.U_max, w, h, MONOCHROME,&r,&g,&b,IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(U, _maximum_values.U_max, w, h, MONOCHROME, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_U.at(h, w).r = r;  image_data_U.at(h, w).g = g; image_data_U.at(h, w).b = b;
                 
-                calculate_colour_data(_mat.at(h, w).voltage, maximum_values.V_max, w, h, COLOUR,&r,&g,&b,IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(_mat.at(h, w).v, _maximum_values.V_max, w, h, COLOUR, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_V.at(h, w).r = r;  image_data_V.at(h, w).g = g; image_data_V.at(h, w).b = b;
                 
-                calculate_colour_data(_mat.at(h, w).er, MAX_ER, w, h, MIXED,&r,&g,&b,IMAGE_FIDDLE_FACTOR);
+                calculate_colour_data(_mat.at(h, w).er, MAX_ER, w, h, MIXED, &r, &g, &b, IMAGE_FIDDLE_FACTOR);
                 image_data_Er.at(h, w).r = r;  image_data_Er.at(h, w).g = g; image_data_Er.at(h, w).b = b;
                 
     #ifdef WRITE_ODDITY_DATA
-                odd=(double)_mat.at(h, w).oddity;
-                calculate_colour_data(odd, 255 , w, h, MONOCHROME,&r,&g,&b,1.0);
+                odd=(float)_mat.at(h, w).oddity;
+                calculate_colour_data(odd, 255 , w, h, MONOCHROME, &r, &g, &b, 1.0);
                 image_data_oddity.at(h, w).r = r;  image_data_oddity.at(h, w).g = g; image_data_oddity.at(h, w).b = b;
     #endif
+
 
             }
         }
 
-        bitmap_write((_inputfile_filename + ".Ex.bmp").c_str(), image_data_Ex);
-        bitmap_write((_inputfile_filename + ".Ey.bmp").c_str(), image_data_Ey);
-        bitmap_write((_inputfile_filename + ".E.bmp").c_str(), image_data_E);
-        bitmap_write((_inputfile_filename + ".V.bmp").c_str(), image_data_V);
-        bitmap_write((_inputfile_filename + ".U.bmp").c_str(), image_data_U);
-        bitmap_write((_inputfile_filename + ".Er.bmp").c_str(), image_data_Er);
+        bitmap_write((_inputfile_filename + ".Ex." + name + "bmp").c_str(), image_data_Ex);
+        bitmap_write((_inputfile_filename + ".Ey." + name + "bmp").c_str(), image_data_Ey);
+        bitmap_write((_inputfile_filename + ".E." + name + "bmp").c_str(), image_data_E);
+        bitmap_write((_inputfile_filename + ".V." + name + "bmp").c_str(), image_data_V);
+        bitmap_write((_inputfile_filename + ".U." + name + "bmp").c_str(), image_data_U);
+        bitmap_write((_inputfile_filename + ".Er." + name + "bmp").c_str(), image_data_Er);
 
 #ifdef WRITE_ODDITY_DATA
         bitmap_write((_inputfile_filename + ".oddity.bmp").c_str(), image_data_oddity);
@@ -1335,7 +1857,7 @@ void atlc3::write_fields_for_two_conductor_lines()
 
 void atlc3::find_maximum_values(struct max_values *maximum_values, int zero_elementsQ)
 {
-    double U, V, Ex, Ey, E, permittivity;
+    float U, V, Ex, Ey, E, permittivity;
     int i, j;
 
     /* It makes sense to draw the even and odd mode images on the same
@@ -1358,54 +1880,54 @@ void atlc3::find_maximum_values(struct max_values *maximum_values, int zero_elem
     {
         for(j = 0;j < _mat.rows(); ++j)
         {
-            V = _mat.at(j, i).voltage;
+            V = _mat.at(j, i).v;
             U = find_energy_per_metre(i, j);
             if(1)
             {
                 if(i == 0)
                 {
                     //Ex=2*Er[i+1][j]*(Vij[i][j]-Vij[i+1][j])/(Er[i+1][j]+Er[i][j]);
-                    Ex = 2 * _mat.at(j, i + 1).er * (_mat.at(j, i).voltage - _mat.at(j, i + 1).voltage) / 
+                    Ex = 2 * _mat.at(j, i + 1).er * (_mat.at(j, i).v - _mat.at(j, i + 1).v) / 
                             (_mat.at(j, i + 1).er + _mat.at(j, i).er);
                 }
                 else if (i == width - 1) 
                 {
                     //Ex=2*Er[i-1][j]*(Vij[i-1][j]-Vij[i][j])/(Er[i-1][j]+Er[i][j]);
-                    Ex = 2 * _mat.at(j, i - 1).er * (_mat.at(j, i - 1).voltage - _mat.at(j, i).voltage) / 
+                    Ex = 2 * _mat.at(j, i - 1).er * (_mat.at(j, i - 1).v - _mat.at(j, i).v) / 
                             (_mat.at(j, i - 1).er + _mat.at(j, i).er);
                 }
                 else /* This is the best estimate, but can't be done on boundary */
                 {
                     //Ex = Er[i-1][j]*(Vij[i-1][j]-Vij[i][j])/(Er[i-1][j]+Er[i][j]);
                     
-                    Ex = _mat.at(j, i - 1).er * (_mat.at(j, i - 1).voltage - _mat.at(j, i).voltage) / 
+                    Ex = _mat.at(j, i - 1).er * (_mat.at(j, i - 1).v - _mat.at(j, i).v) / 
                             (_mat.at(j, i - 1).er + _mat.at(j, i).er);
                             
                     //Ex += Er[i+1][j]*(Vij[i][j]-Vij[i+1][j])/(Er[i+1][j]+Er[i][j]);
-                    Ex += _mat.at(j, i + 1).er * (_mat.at(j, i).voltage - _mat.at(j, i + 1).voltage) / 
+                    Ex += _mat.at(j, i + 1).er * (_mat.at(j, i).v - _mat.at(j, i + 1).v) / 
                             (_mat.at(j, i + 1).er + _mat.at(j, i).er);
                 }
                 
                 if(j == 0)
                 {
                     //Ey=2*Er[i][j+1]*(Vij[i][j]-Vij[i][j+1])/(Er[i][j+1]+Er[i][j]);
-                    Ey = 2 * _mat.at(j + 1, i).er * (_mat.at(j, i).voltage - _mat.at(j + 1, i).voltage) / 
+                    Ey = 2 * _mat.at(j + 1, i).er * (_mat.at(j, i).v - _mat.at(j + 1, i).v) / 
                             (_mat.at(j + 1, i).er + _mat.at(j, i).er);
                 }
                 else if (j == height - 1)
                 {
                     //Ey=2*Er[i][j-1]*(Vij[i][j-1]-Vij[i][j])/(Er[i][j-1]+Er[i][j]);
-                    Ey = 2 * _mat.at(j - 1, i).er * (_mat.at(j - 1, i).voltage - _mat.at(j, i).voltage) / 
+                    Ey = 2 * _mat.at(j - 1, i).er * (_mat.at(j - 1, i).v - _mat.at(j, i).v) / 
                             (_mat.at(j - 1, i).er + _mat.at(j, i).er);
                 }
                 else
                 {
                     //Ey=Er[i][j-1]*(Vij[i][j-1]-Vij[i][j])/(Er[i][j-1]+Er[i][j]);
-                    Ey = _mat.at(j - 1, i).er * (_mat.at(j - 1, i).voltage - _mat.at(j, i).voltage) / 
+                    Ey = _mat.at(j - 1, i).er * (_mat.at(j - 1, i).v - _mat.at(j, i).v) / 
                             (_mat.at(j - 1, i).er + _mat.at(j, i).er);
                             
                     //Ey+=Er[i][j+1]*(Vij[i][j]-Vij[i][j+1])/(Er[i][j+1]+Er[i][j]);
-                    Ey += _mat.at(j + 1, i).er * (_mat.at(j, i).voltage - _mat.at(j + 1, i).voltage) / 
+                    Ey += _mat.at(j + 1, i).er * (_mat.at(j, i).v - _mat.at(j + 1, i).v) / 
                             (_mat.at(j + 1, i).er + _mat.at(j, i).er);
                 }
                 E = sqrt(Ex * Ex + Ey * Ey);
@@ -1464,8 +1986,8 @@ void atlc3::find_maximum_values(struct max_values *maximum_values, int zero_elem
 }
 
 
-void atlc3::calculate_colour_data(double x, double xmax, int w, int h, int image_type,
-unsigned char *red, unsigned char *green, unsigned char *blue, double image_fiddle_factor)
+void atlc3::calculate_colour_data(float x, float xmax, int w, int h, int image_type,
+unsigned char *red, unsigned char *green, unsigned char *blue, float image_fiddle_factor)
 {
     if(image_type == COLOUR) /*Ex, Ey, V */
     {

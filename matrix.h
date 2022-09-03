@@ -19,13 +19,14 @@ public:
     
     ~matrix()
     {
-        
+        _free();
     }
     
 public:
     
     bool create(std::int32_t rows, std::int32_t cols, std::int32_t border = 0, const T& v = T())
     {
+        _free();
         _data = (T*)malloc(sizeof(T) * (rows + border * 2) * (cols + border * 2));
         if (_data == NULL)
         {
@@ -45,12 +46,12 @@ public:
     
     inline T& at(std::int32_t row, std::int32_t col)
     {
-        return _data[row * _cols + col];
+        return _data[(row + _border) * (_cols + _border * 2) + col + _border];
     }
     
     inline const T& at(std::int32_t row, std::int32_t col) const
     {
-        return _data[row * _cols + col];
+        return _data[(row + _border) * (_cols + _border * 2) + col + _border];
     }
     
     inline T* data()
@@ -72,6 +73,29 @@ public:
     {
         return _cols;
     }
+
+    inline std::int32_t border_size()
+    {
+        return _border;
+    }
+    
+private:
+    void _free()
+    {
+        if (_data)
+        {
+            for (std::int32_t i = 0; i < (_rows + _border * 2) * (_cols + _border * 2); i++)
+            {
+                ((T*)(_data + i))->~T();
+            }
+            free(_data);
+            _data = 0;
+            _rows = 0;
+            _cols = 0;
+            _border = 0;
+        }
+    }
+    
 private:
     T *_data;
     std::int32_t _rows;
