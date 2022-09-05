@@ -145,7 +145,7 @@ bool bitmap_read(const char *filename, matrix_rgb& img)
             break;
         }
         
-        printf("offset:%d, size:%d, width:%d, height:%d\n", offset, size, width, height);
+        //printf("offset:%d, size:%d, width:%d, height:%d\n", offset, size, width, height);
         img.create(height, width);
         
         bool brk = false;

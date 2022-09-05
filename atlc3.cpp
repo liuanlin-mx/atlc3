@@ -6,12 +6,12 @@ static std::uint32_t colours[]={0xffffff, 0xffcaca, 0x8235ef, 0x8e8e8e, 0xff00ff
 
 atlc3::atlc3()
     : _coupler(false)
-    , _verbose_level(3)
+    , _verbose_level(0)
 {
     _r = 1.9;
     _cutoff = 0.0001;
     
-    _write_binary_field_imagesQ = false;
+    _write_binary_field_imagesQ = true;
     _write_bitmap_field_imagesQ = true;
     _inputfile_filename = "test.bmp";
     
@@ -49,7 +49,7 @@ bool atlc3::setup_arrays(const matrix_rgb & img)
     pixels_found.other_colour = 0;
     
     
-    _mat.create(img.rows(), img.cols());
+    _mat.create(img.rows(), img.cols(), 1);
     
     for (std::int32_t row = 0; row < img.rows(); row++)
     {
@@ -687,7 +687,7 @@ void atlc3::do_fd_calculation()
 
             if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
             {
-                _Ceven*=_found_this_dielectric;  /* Scaled by the single dielectric constant */
+                _Ceven *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
                 
             }
             else
@@ -1702,7 +1702,7 @@ void atlc3::write_fields(std::string name, std::int32_t zero_elementsQ)
         U_bin_fp = fopen((_inputfile_filename + ".U." + name + "bin").c_str(), "wb");
         permittivity_bin_fp = fopen((_inputfile_filename + ".Er.bin").c_str(), "wb");
         
-        for (std::int32_t row = _mat.rows() - 1; row >= 0; row++)
+        for (std::int32_t row = _mat.rows() - 1; row >= 0; row--)
         {
             for (std::int32_t col = 0; col < _mat.cols(); col++)
             {

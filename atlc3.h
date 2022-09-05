@@ -3,7 +3,6 @@
 #include <vector>
 #include <map>
 #include <math.h>
-#include <opencv2/opencv.hpp>
 #include "matrix.h"
 #include "bitmap.h"
 
@@ -128,6 +127,40 @@ public:
     bool set_oddity_value();
     void do_fd_calculation();
     
+    void set_inputfile_filename(const char *filename)
+    {
+        _inputfile_filename = filename;
+    }
+    void set_verbose_level(std::int32_t level)
+    {
+        _verbose_level = level;
+    }
+    
+    void add_er(std::uint32_t color, float er)
+    {
+        _er_list.push_back(std::pair<std::uint32_t, float>(color, er));
+    }
+    
+    void set_cutoff(float cutoff)
+    {
+        _cutoff = cutoff;
+    }
+    
+    void set_rate_multiplier(float rate_multiplier)
+    {
+        _r = rate_multiplier;
+    }
+    
+    void enable_binary_imageQ(bool b)
+    {
+        _write_binary_field_imagesQ = b;
+    }
+    
+    void enable_bitmap_imageQ(bool b)
+    {
+        _write_bitmap_field_imagesQ = b;
+    }
+    
     void setup_mask(bool ignore_dielectric);
     float finite_difference_single_threaded();
     void update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax);
@@ -148,13 +181,12 @@ public:
     void write_fields(std::string name = "", std::int32_t zero_elementsQ = ZERO_ELEMENTS_FIRST);
     void find_maximum_values(struct max_values *maximum_values, int zero_elementsQ);
     void calculate_colour_data(float x, float xmax, int w, int h, int image_type,
-unsigned char *red, unsigned char *green, unsigned char *blue, float image_fiddle_factor);
+                unsigned char *red, unsigned char *green, unsigned char *blue, float image_fiddle_factor);
     
 private:
     matrix_atlc _mat;
     bool _coupler;
     std::uint32_t _dielectrics_to_consider_just_now;
-    float _found_this_dielectric = 1.0;
     
     std::vector<std::pair<std::uint32_t, float> > _er_list; //命令行用户输入的电介质常熟
     std::map<std::uint32_t, pixels> _er_bitmap;
