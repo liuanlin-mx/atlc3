@@ -14,16 +14,13 @@ atlc3::atlc3()
     _write_binary_field_imagesQ = true;
     _write_bitmap_field_imagesQ = true;
     _inputfile_filename = "test.bmp";
-    
-    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f0ed8, 3.800000));
-    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f1004, 4.100000));
-    _er_list.push_back(std::pair<std::uint32_t, float>(0x0f1108, 4.360000));
 }
 
 
 atlc3::~atlc3()
 {
 }
+
 
 
 
@@ -418,6 +415,103 @@ bool atlc3::set_oddity_value()
 
 void atlc3::do_fd_calculation()
 {
+#if 0
+    {
+        std::uint32_t count[256];
+        memset(count, 0, sizeof(count));
+        for(std::int32_t i = 0; i < _mat.cols() ; ++i)
+        {
+            for(std::int32_t j = 0; j < _mat.rows(); ++j)
+            {
+                count[_mat.at(j, i).oddity]++;
+            }
+        }
+        for (std::int32_t i = 0; i < 256; i++)
+        {
+            if (count[i] > 0)
+            {
+                printf("o:%d c:%d\n", i, count[i]);
+            }
+        }
+    }
+#endif
+
+    /* The following 10 lines are for a single dielectric 2 conductor line */
+    if (!_coupler)
+    {
+        do_tl_calculation();
+    }
+    else
+    {
+        float L_plus_vacuum = 0.;
+        float C_plus = 0.;
+        
+        float L_minus_vacuum = 0.;
+        float C_minus = 0.;
+        
+        matrix_atlc mat;
+        mat.create(_mat.rows(), _mat.cols());
+        for(std::int32_t row = 0; row < _mat.rows() ; ++row)
+        {
+            for(std::int32_t col = 0; col < _mat.cols(); ++col)
+            {
+                mat.at(row, col).cell_type = _mat.at(row, col).cell_type;
+            }
+        }
+        
+        do_coupler_calculation();
+        
+        _coupler = false;
+        
+        for(std::int32_t row = 0; row < _mat.rows() ; ++row)
+        {
+            for(std::int32_t col = 0; col < _mat.cols(); ++col)
+            {
+                if (mat.at(row, col).cell_type == CONDUCTOR_MINUS_ONE_V)
+                {
+                    _mat.at(row, col).cell_type = DIELECTRIC;
+                    _mat.at(row, col).er = 1.0;
+                }
+            }
+        }
+        set_oddity_value();
+        do_tl_calculation();
+        
+        L_plus_vacuum = _L_vacuum;
+        C_plus = _C;
+        
+        
+        for(std::int32_t row = 0; row < _mat.rows() ; ++row)
+        {
+            for(std::int32_t col = 0; col < _mat.cols(); ++col)
+            {
+                if (mat.at(row, col).cell_type == CONDUCTOR_MINUS_ONE_V)
+                {
+                    _mat.at(row, col).cell_type = CONDUCTOR_PLUS_ONE_V;
+                    _mat.at(row, col).er = 0;
+                    _mat.at(row, col).v = 1;
+                }
+                else if (mat.at(row, col).cell_type == CONDUCTOR_PLUS_ONE_V)
+                {
+                    _mat.at(row, col).cell_type = DIELECTRIC;
+                    _mat.at(row, col).er = 1.0;
+                    _mat.at(row, col).v = 0;
+                }
+            }
+        }
+        set_oddity_value();
+        do_tl_calculation();
+        
+        L_minus_vacuum = _L_vacuum;
+        C_minus = _C;
+        
+        print_data_for_directional_couplers(L_plus_vacuum, C_plus, L_minus_vacuum, C_minus);
+    } /* end of if couplers */
+}
+
+
+void atlc3::do_tl_calculation()
+{
     float capacitance_old;
     float capacitance;
     float velocity_of_light_in_vacuum;
@@ -432,334 +526,367 @@ void atlc3::do_fd_calculation()
     (void)relative_permittivity_odd;
     (void)relative_permittivity_even;
     
-    velocity_of_light_in_vacuum = 1.0/(sqrt(MU_0 * EPSILON_0)); /* around 3x10^8 m/s */
+    velocity_of_light_in_vacuum = 1.0 / (sqrt(MU_0 * EPSILON_0)); /* around 3x10^8 m/s */
     
-    /* The following 10 lines are for a single dielectric 2 conductor line */
-    if (!_coupler)
+    if(_verbose_level >= 2)
     {
-        if(_verbose_level >= 2)
+        printf("Solving assuming a vacuum dielectric\n");
+    }
+    
+    capacitance = VERY_LARGE; /* Can be anything large */
+    
+    _dielectrics_to_consider_just_now = 1;
+    
+    do /* Start a finite calculation */
+    {
+        capacitance_old = capacitance;
+
+        capacitance = finite_difference_single_threaded();
+
+        _C_vacuum = capacitance;
+        _C = capacitance;
+        _L_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
+        _Zo_vacuum = sqrt(_L_vacuum / _C_vacuum);  /* Standard formaul for Zo */
+        _C = capacitance; 
+        
+        if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
         {
-            printf("Solving assuming a vacuum dielectric\n");
+            _Er = _er_bitmap.begin()->second.epsilon;
+            _C = capacitance * _Er;  /* Scaled by the single dielectric constant */
+        }
+        else
+        {
+            _Er = 1.0;
         }
         
+        _Zo = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
+        _Zodd = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
+        _velocity = 1.0 / pow(_L_vacuum * _C, 0.5);
+        _velocity_factor = _velocity / velocity_of_light_in_vacuum;
+        relative_permittivity = sqrt(_velocity_factor); /* ??? XXXXXX */
+        
+        if (_verbose_level > 0) /* Only needed if intermediate results wanted.  */
+        {
+            print_data_for_two_conductor_lines();
+        }
+        count++;
+    }
+    while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+    
+    
+    if (_verbose_level >= 4)
+    {
+        printf("Total of %d iterations ( %d calls to finite_difference() )\n", ITERATIONS * count, count);
+    }
+    
+    if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+    {
+        write_fields();
+    }
+    
+    if (_verbose_level == 0 && _er_bitmap.size() == 1)
+    {
+        print_data_for_two_conductor_lines();
+    }
+    
+    if (_er_bitmap.size() > 1)
+    {
+        /* We know the capacitance and inductance for the air spaced line
+        as we calculated it above. Howerver, whilst the inductance
+        is independant of the dielectric, the capacitance is not, so this
+        has to be recalculated, taking care not to alter the inductance
+        at all */
+        
+        
+        
+        if(_verbose_level >= 2)
+        {
+            printf("Now taking into account the permittivities of the different dielectrics for 2 conductors.\n");
+        }
+        
+        _dielectrics_to_consider_just_now = 2; /* Any number > 1 */
         capacitance = VERY_LARGE; /* Can be anything large */
-        
-        _dielectrics_to_consider_just_now = 1;
-        //setup_mask(true);
-        
+
+
         do /* Start a finite calculation */
         {
             capacitance_old = capacitance;
 
             capacitance = finite_difference_single_threaded();
 
-            _C_vacuum = capacitance;
             _C = capacitance;
-            _L_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
-            _Zo_vacuum = sqrt(_L_vacuum / _C_vacuum);  /* Standard formaul for Zo */
-            _C = capacitance; 
-            
-            if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
-            {
-                _Er = _er_bitmap.begin()->second.epsilon;
-                _C = capacitance * _Er;  /* Scaled by the single dielectric constant */
-            }
-            else
-            {
-                _Er = 1.0;
-            }
-            
-            _Zo = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
-            _Zodd = sqrt(_L_vacuum / _C);  /* Standard formula for Zo */
-            _velocity = 1.0 / pow(_L_vacuum * _C, 0.5);
+            C_non_vacuum = capacitance;
+            _Zo = sqrt(_L_vacuum / C_non_vacuum);  /* Standard formula for Zo */
+            _velocity = 1.0 / pow(_L_vacuum * C_non_vacuum, 0.5);
+
+
             _velocity_factor = _velocity / velocity_of_light_in_vacuum;
             relative_permittivity = sqrt(_velocity_factor); /* ??? XXXXXX */
-            
-            if (_verbose_level > 0) /* Only needed if intermediate results wanted.  */
+	        _Er = _C / _C_vacuum;
+            if (_verbose_level > 0 ) /* Only needed if intermediate results wanted. */
             {
                 print_data_for_two_conductor_lines();
             }
-            count++;
         }
         while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
-        
-        
-        if (_verbose_level >= 4)
-        {
-            printf("Total of %d iterations ( %d calls to finite_difference() )\n", ITERATIONS * count, count);
-        }
-        
-        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
-        {
-            write_fields();
-        }
-        
-        if (_verbose_level == 0 && _er_bitmap.size() == 1)
+
+        /* We must print the results now, but only bother if the verbose level was 
+        not not incremented on the command line, otherwide there will be two duplicate
+        lines */
+
+        if (_verbose_level == 0)
         {
             print_data_for_two_conductor_lines();
         }
-        
-        if (_er_bitmap.size() > 1)
+    
+        if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
         {
-            /* We know the capacitance and inductance for the air spaced line
-            as we calculated it above. Howerver, whilst the inductance
-            is independant of the dielectric, the capacitance is not, so this
-            has to be recalculated, taking care not to alter the inductance
-            at all */
-            
-            if(_verbose_level >= 2)
-            {
-                printf("Now taking into account the permittivities of the different dielectrics for 2 conductors.\n");
-            }
-            
-            _dielectrics_to_consider_just_now = 2; /* Any number > 1 */
-            capacitance = VERY_LARGE; /* Can be anything large */
-
-            do /* Start a finite calculation */
-            {
-                capacitance_old = capacitance;
-                capacitance = finite_difference_single_threaded();
-                _C = capacitance;
-                C_non_vacuum = capacitance;
-                _Zo = sqrt(_L_vacuum / C_non_vacuum);  /* Standard formula for Zo */
-                _velocity = 1.0 / pow(_L_vacuum * C_non_vacuum, 0.5);
-                _velocity_factor = _velocity / velocity_of_light_in_vacuum;
-                relative_permittivity = sqrt(_velocity_factor); /* ??? XXXXXX */
-		        _Er = _C / _C_vacuum;
-                if (_verbose_level > 0 ) /* Only needed if intermediate results wanted. */
-                {
-                    print_data_for_two_conductor_lines();
-                }
-            }
-            while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
-
-            /* We must print the results now, but only bother if the verbose level was 
-            not not incremented on the command line, otherwide there will be two duplicate
-            lines */
-
-            if (_verbose_level == 0)
-            {
-                print_data_for_two_conductor_lines();
-            }
-        
-            if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
-            {
-                write_fields();
-            }
+            write_fields();
         }
     }
+}
+
+
+
+
+void atlc3::do_coupler_calculation()
+{
+    float capacitance_old;
+    float capacitance;
+    float velocity_of_light_in_vacuum;
+  
+    float relative_permittivity;
+    float relative_permittivity_odd;
+    float relative_permittivity_even;
     
-    else
+    (void)relative_permittivity;
+    (void)relative_permittivity_odd;
+    (void)relative_permittivity_even;
+    
+    velocity_of_light_in_vacuum = 1.0 / (sqrt(MU_0 * EPSILON_0)); /* around 3x10^8 m/s */
+    
+    /* The properties of a couplers will be computed in 2 or 4 stages
+    1) Compute the odd-mode impedance, assuming a vacuum dielectric, or
+    if there is just one dielectric, that one.
+
+    2) Compute the odd-mode impedance, taking into account the effect of
+    multiple dielectrics, IF NECESSARY
+
+    at this point, the negative voltages will be turned into positive ones. 
+
+    3) Compute the even-mode impedance, assuming a vacuum dielectric, or
+    if there is just one dielectric, that one.
+
+    4) Compute the even-mode impedance, taking into account the effect of
+    multiple dielectrics, IF NECESSARY  */
+
+    /* Stage 1 - compute the odd mode impedance assuming single dielectric */
+    
+    _display = Z_ODD_SINGLE_DIELECTRIC;
+    _dielectrics_to_consider_just_now = 1;
+
+    capacitance = VERY_LARGE; /* Can be anything large */
+    if(_verbose_level >= 2)
     {
-        /* The properties of a couplers will be computed in 2 or 4 stages
-        1) Compute the odd-mode impedance, assuming a vacuum dielectric, or
-        if there is just one dielectric, that one.
+        printf("Solving assuming a vacuum dielectric to compute the odd-mode impedance\n");
+    }
 
-        2) Compute the odd-mode impedance, taking into account the effect of
-        multiple dielectrics, IF NECESSARY
+    do /* Start a finite difference calculation */
+    {
+        capacitance_old = capacitance;
+        capacitance = finite_difference_single_threaded();
+    
+        _Codd_vacuum = capacitance;
+        _Codd = capacitance;
+        _Lodd_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
 
-        at this point, the negative voltages will be turned into positive ones. 
+        _Zodd_vacuum = sqrt(_Lodd_vacuum / _Codd_vacuum);  /* Standard formaul for Zodd */
 
-        3) Compute the even-mode impedance, assuming a vacuum dielectric, or
-        if there is just one dielectric, that one.
+        if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
+        {
+            _Codd *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
+        }
+        else
+        {
+            _Er = 1.0;
+        }
+        
+        _Zodd = sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
+        
+        /* FPE trapdata->velocity_odd=1.0/pow(data->L_vacuum*data->Codd,0.5); */
+        _velocity_odd = 1.0 / pow(_Lodd_vacuum * _Codd, 0.5);
+        _velocity_factor_odd = _velocity_odd / velocity_of_light_in_vacuum;
+        relative_permittivity_odd = sqrt(_velocity_factor_odd); /* ??? XXXXXX */
+        _Er_odd = _Codd / _Codd_vacuum;
+        _Zdiff = 2.0 * _Zodd;
+        /* Print text if uses wants it */
+        if(_verbose_level >= 1)
+        {
+            print_data_for_directional_couplers();
+        }
+    } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
 
-        4) Compute the even-mode impedance, taking into account the effect of
-        multiple dielectrics, IF NECESSARY  */
+    /* display bitpamps/binary files if this is the last odd-mode computation */
+    if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+    {
+        write_fields("odd.");
+    }
+    
+    /* Stage 2 - compute the odd-mode impedance taking into account other dielectrics IF NECESSARY */
 
-        /* Stage 1 - compute the odd mode impedance assuming single dielectric */
+    if (_er_bitmap.size() >1)
+    {
+        if (_verbose_level >= 2)
+        {
+            printf("Now taking into account the permittivities of the different dielectrics to compute Zodd.\n");
+        }
         
         _display = Z_ODD_SINGLE_DIELECTRIC;
-        _dielectrics_to_consider_just_now = 1;
 
         capacitance = VERY_LARGE; /* Can be anything large */
-        if(_verbose_level >= 2)
-        {
-            printf("Solving assuming a vacuum dielectric to compute the odd-mode impedance\n");
-        }
 
-        do /* Start a finite difference calculation */
+        _dielectrics_to_consider_just_now = 2;
+    
+        do /* Start a finite calculation */
         {
             capacitance_old = capacitance;
+            
             capacitance = finite_difference_single_threaded();
-        
-            _Codd_vacuum = capacitance;
+
             _Codd = capacitance;
-            _Lodd_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
+            _Zodd= sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
 
-            _Zodd_vacuum = sqrt(_Lodd_vacuum / _Codd_vacuum);  /* Standard formaul for Zodd */
 
-            if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
-            {
-                _Codd *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
-            }
-            else
-            {
-                _Er = 1.0;
-            }
             
-            _Zodd = sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
-            
-            /* FPE trapdata->velocity_odd=1.0/pow(data->L_vacuum*data->Codd,0.5); */
-            _velocity_odd = 1.0 / pow(_Lodd_vacuum * _Codd, 0.5);
-            _velocity_factor_odd = _velocity_odd / velocity_of_light_in_vacuum;
-            relative_permittivity_odd = sqrt(_velocity_factor_odd); /* ??? XXXXXX */
+            _velocity_odd = 1.0 / pow(_L_vacuum * _C, 0.5);
+            _velocity_factor_odd = _velocity / velocity_of_light_in_vacuum;
+            relative_permittivity_odd = sqrt(_velocity_factor); /* ??? XXXXXX */
             _Er_odd = _Codd / _Codd_vacuum;
             _Zdiff = 2.0 * _Zodd;
-            /* Print text if uses wants it */
             if(_verbose_level >= 1)
             {
                 print_data_for_directional_couplers();
             }
         } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
 
-        /* display bitpamps/binary files if this is the last odd-mode computation */
-        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() != 1)
         {
             write_fields("odd.");
         }
-        
-        /* Stage 2 - compute the odd-mode impedance taking into account other dielectrics IF NECESSARY */
+    } /* end of stage 2 for couplers */
 
-        if (_er_bitmap.size() >1)
+    /* Stage 3 - compute the even-mode impedance assuming single dielectric */
+
+
+    /* Since we want the even mode impedance now, we swap all the -1V
+    metallic conductors for +1V */
+
+
+
+    swap_conductor_voltages();
+
+    _display = Z_EVEN_SINGLE_DIELECTRIC;
+    _dielectrics_to_consider_just_now = 1;
+    if(_verbose_level >= 2)
+    {
+        printf("Now assuming a vacuum dielectric to compute Zeven\n");
+    }
+    
+    capacitance = VERY_LARGE; /* Can be anything large */
+
+
+    do /* Start a finite difference calculation */
+    {
+        capacitance_old = capacitance;
+        capacitance = finite_difference_single_threaded();
+
+        _Ceven_vacuum = capacitance;
+        _Ceven = capacitance;
+        _Leven_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
+
+        _Zeven_vacuum = sqrt(_Leven_vacuum / _Ceven_vacuum);  /* Standard formaul for Zodd */
+
+        if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
         {
-            if (_verbose_level >= 2)
-            {
-                printf("Now taking into account the permittivities of the different dielectrics to compute Zodd.\n");
-            }
+            _Ceven *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
             
-            _display = Z_ODD_SINGLE_DIELECTRIC;
-            capacitance = VERY_LARGE; /* Can be anything large */
-
-            _dielectrics_to_consider_just_now = 2;
-        
-            do /* Start a finite calculation */
-            {
-                capacitance_old = capacitance;
-                
-                capacitance = finite_difference_single_threaded();
-                _Codd = capacitance;
-                _Zodd= sqrt(_Lodd_vacuum / _Codd);  /* Standard formula for Zo */
-                
-                _velocity_odd = 1.0 / pow(_L_vacuum * _C, 0.5);
-                _velocity_factor_odd = _velocity / velocity_of_light_in_vacuum;
-                relative_permittivity_odd = sqrt(_velocity_factor); /* ??? XXXXXX */
-                _Er_odd = _Codd / _Codd_vacuum;
-                _Zdiff = 2.0 * _Zodd;
-                if(_verbose_level >= 1)
-                {
-                    print_data_for_directional_couplers();
-                }
-            } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
-
-            if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() != 1)
-            {
-                write_fields("odd.");
-            }
-        } /* end of stage 2 for couplers */
-
-        /* Stage 3 - compute the even-mode impedance assuming single dielectric */
-
-        /* Since we want the even mode impedance now, we swap all the -1V
-        metallic conductors for +1V */
-
-        swap_conductor_voltages();
-
-        _display = Z_EVEN_SINGLE_DIELECTRIC;
-        _dielectrics_to_consider_just_now = 1;
-        if(_verbose_level >= 2)
+        }
+        else
         {
-            printf("Now assuming a vacuum dielectric to compute Zeven\n");
+            _Er_even = 1.0;
+        }
+        _Zeven = sqrt(_Leven_vacuum / _Ceven);  /* Standard formula for Zo */
+        _velocity_even = 1.0 / pow(_Leven_vacuum * _Ceven, 0.5);
+        _velocity_factor_even = _velocity_even / velocity_of_light_in_vacuum;
+        relative_permittivity_even = sqrt(_velocity_factor_even); /* ??? XXXXXX */
+        _Er_even = _Ceven / _Ceven_vacuum;
+        _Zcomm = _Zeven / 2.0;
+        _Zo = sqrt(_Zodd * _Zeven);
+        if (_verbose_level >= 1)
+        {
+            print_data_for_directional_couplers();
+        }
+        /* display bitpamps/binary files if this is the last even-mode computation */
+    } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
+
+    if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+    {
+        write_fields("even.", DONT_ZERO_ELEMENTS);
+    }
+
+    capacitance = VERY_LARGE; /* Can be anything large */
+    /* Stage 4 - compute the even-mode impedance assuming multiple dielectrics IF NECESSARY */
+    if (_er_bitmap.size() > 1)
+    {
+        _dielectrics_to_consider_just_now=2;
+        if (_verbose_level >= 2)
+        {
+            printf("Now taking into account the permittivities of the different dielectrics to compute Zeven\n");
         }
         
-        capacitance = VERY_LARGE; /* Can be anything large */
-
-
-        do /* Start a finite difference calculation */
+        do /* Start a finite calculation */
         {
             capacitance_old = capacitance;
             capacitance = finite_difference_single_threaded();
-
-            _Ceven_vacuum = capacitance;
+            
             _Ceven = capacitance;
-            _Leven_vacuum = MU_0 * EPSILON_0 / capacitance; /* Same as L in *ALL* cases */
 
-            _Zeven_vacuum = sqrt(_Leven_vacuum / _Ceven_vacuum);  /* Standard formaul for Zodd */
 
-            if (_er_bitmap.size() == 1) /* Just get C by simple scaling of Er */
-            {
-                _Ceven *= _er_bitmap.begin()->second.epsilon;  /* Scaled by the single dielectric constant */
-                
-            }
-            else
-            {
-                _Er_even = 1.0;
-            }
+
             _Zeven = sqrt(_Leven_vacuum / _Ceven);  /* Standard formula for Zo */
-            _velocity_even = 1.0 / pow(_Leven_vacuum * _Ceven, 0.5);
-            _velocity_factor_even = _velocity_even / velocity_of_light_in_vacuum;
-            relative_permittivity_even = sqrt(_velocity_factor_even); /* ??? XXXXXX */
+            _velocity_even = 1.0 / pow(_L_vacuum * _C, 0.5);
+            _velocity_factor_even = _velocity / velocity_of_light_in_vacuum;
+            relative_permittivity_even = sqrt(_velocity_factor); /* ??? XXXXXX */
             _Er_even = _Ceven / _Ceven_vacuum;
-            _Zcomm = _Zeven / 2.0;
-            _Zo = sqrt(_Zodd * _Zeven);
+            _Zdiff = 2.0 * _Zodd;
+            _Zcomm = _Zeven / 2.0; 
+            _Zo = sqrt(_Zeven * _Zodd);
             if (_verbose_level >= 1)
             {
                 print_data_for_directional_couplers();
             }
-            /* display bitpamps/binary files if this is the last even-mode computation */
         } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
 
-        if ((_write_binary_field_imagesQ || _write_bitmap_field_imagesQ) && _er_bitmap.size() == 1)
+        if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
         {
             write_fields("even.", DONT_ZERO_ELEMENTS);
         }
+    } /* end of stage 4 */
+    
+    /* Print the results if the verbose level was 0 (no -v flag(s) ). */
+    if (_verbose_level == 0)
+    {
+        /* We need to print the data. The next function will only print if 
+        the verbose_level is 1 or more, so I'll fix it at one. Then we print
+        the final results and exit. */
+        _verbose_level = 1;
+        _display = Z_EVEN_SINGLE_DIELECTRIC;
+        print_data_for_directional_couplers();
+        _verbose_level = 0;
+    }
 
-        capacitance = VERY_LARGE; /* Can be anything large */
-        /* Stage 4 - compute the even-mode impedance assuming multiple dielectrics IF NECESSARY */
-        if (_er_bitmap.size() > 1)
-        {
-            _dielectrics_to_consider_just_now=2;
-            if (_verbose_level >= 2)
-            {
-                printf("Now taking into account the permittivities of the different dielectrics to compute Zeven\n");
-            }
-            
-            do /* Start a finite calculation */
-            {
-                capacitance_old = capacitance;
-                capacitance = finite_difference_single_threaded();
-                
-                _Ceven = capacitance;
-                _Zeven = sqrt(_Leven_vacuum / _Ceven);  /* Standard formula for Zo */
-                _velocity_even = 1.0 / pow(_L_vacuum * _C, 0.5);
-                _velocity_factor_even = _velocity / velocity_of_light_in_vacuum;
-                relative_permittivity_even = sqrt(_velocity_factor); /* ??? XXXXXX */
-                _Er_even = _Ceven / _Ceven_vacuum;
-                _Zdiff = 2.0 * _Zodd;
-                _Zcomm = _Zeven / 2.0; 
-                _Zo = sqrt(_Zeven * _Zodd);
-                if (_verbose_level >= 1)
-                {
-                    print_data_for_directional_couplers();
-                }
-            } while (fabs((capacitance_old - capacitance) / capacitance_old) > _cutoff); /* end of FD loop */
 
-            if (_write_binary_field_imagesQ || _write_bitmap_field_imagesQ)
-            {
-                write_fields("even.", DONT_ZERO_ELEMENTS);
-            }
-        } /* end of stage 4 */
-        
-        /* Print the results if the verbose level was 0 (no -v flag(s) ). */
-        if (_verbose_level == 0)
-        {
-            /* We need to print the data. The next function will only print if 
-            the verbose_level is 1 or more, so I'll fix it at one. Then we print
-            the final results and exit. */
-            _verbose_level = 1;
-            _display = Z_EVEN_SINGLE_DIELECTRIC;
-            print_data_for_directional_couplers();
-        }
-    } /* end of if couplers */
+
 }
 
 
@@ -785,7 +912,19 @@ float atlc3::finite_difference_single_threaded()
     each computation id done in 4 directions */
 
     //update_voltage_array(number_of_iterations, 0, _mat.cols() - 1, 0, _mat.rows() - 1);
+#if 0
     update_voltage_array_fast(number_of_iterations);
+#else
+    if (_dielectrics_to_consider_just_now == 1)
+    {
+        update_voltage_array_fast_ignore_dielectric(number_of_iterations);
+    }
+    else
+    {
+        update_voltage_array_fast_dielectric(number_of_iterations);
+    }
+#endif
+    //update_voltage_array_int(number_of_iterations);
     //update_voltage_array_fast(number_of_iterations, 1, _mat.cols() - 2, 1, _mat.rows() - 2);
     
     //matrix_rgb img_er;
@@ -797,7 +936,7 @@ float atlc3::finite_difference_single_threaded()
     //cvt_rgb(img);
     //cv::Mat cvimg(img.rows(), img.cols(), CV_8UC3, img.data());
     //cv::imshow("img", cvimg);
-    //cv::waitKey(10);
+    //cv::waitKey(100);
     
     /* Once the v distribution is found, the energy in the field may be 
     found. This can be shown to be Energy = 0.5 * integral(E.D) dV, when 
@@ -816,7 +955,7 @@ float atlc3::finite_difference_single_threaded()
         }
     }
     
-    if(_coupler == false)
+    if (_coupler == false)
     {
         capacitance_per_metre = 2 * energy_per_metre;
     }
@@ -1168,7 +1307,7 @@ void atlc3::update_voltage_array_fast(int nmax)
                 {
                     node.v = -1.0;
                 }
-                else if( oddity_value == TOP_LEFT_CORNER )
+                else if (oddity_value == TOP_LEFT_CORNER)
                 {  /* top left */
                     Vnew = 0.5 * (_mat.at(0, 1).v + _mat.at(1, 0).v);
                     node.v = g * Vnew + (1 - g) * node.v;
@@ -1351,6 +1490,429 @@ void atlc3::update_voltage_array_fast(int nmax)
                     fprintf(stderr,"i=%d j=%d oddity[%d][%d]=%d\n", i, j, i,j, oddity_value);
                     //exit(INTERNAL_ERROR);
                     return;
+                } /* end if if an internal error */
+            } /* end of j loop */
+        }
+    }
+}
+
+void atlc3::update_voltage_array_fast_ignore_dielectric(int nmax)
+{
+    std::uint8_t oddity_value;
+    float Va, Vb, Vl, Vr;
+    float Vnew, g;
+    
+    
+    std::int32_t width = _mat.cols();
+    std::int32_t height = _mat.rows();
+    
+    g = _r;
+    for(std::int32_t n = 0; n  < nmax; ++n)
+    {
+        for (std::int32_t j = 0; j < height; j++)
+        {
+            for (std::int32_t i = 0; i < width; i++)
+            {
+                atlc3_node& node = _mat.at(j, i);
+                oddity_value = node.oddity;
+                
+                //if (__builtin_expect(oddity_value == ORDINARY_INTERIOR_POINT, 1))
+                if (oddity_value == ORDINARY_INTERIOR_POINT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = (Va + Vb + Vl + Vr) / 4.0;
+                    node.v = g * Vnew + ((float)1 - g) * node.v;
+                }
+                else if (oddity_value == CONDUCTOR_ZERO_V)
+                {
+                    node.v = 0.0;
+                }
+                else if (oddity_value == CONDUCTOR_PLUS_ONE_V)
+                {
+                    node.v = 1.0;
+                }
+                else if (oddity_value == CONDUCTOR_MINUS_ONE_V)
+                {
+                    node.v = -1.0;
+                }
+                else if (oddity_value == TOP_LEFT_CORNER)
+                {  /* top left */
+                    Vnew = 0.5 * (_mat.at(0, 1).v + _mat.at(1, 0).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == TOP_RIGHT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(0, width - 2).v + _mat.at(1, width - 1).v);   /* top right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_LEFT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(height - 2, 0).v + _mat.at(height - 1, 1).v); /* bottom left */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_RIGHT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(height - 1, width - 2).v + _mat.at(height - 2, width - 1).v); /* bottom right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                /* Now the sides */
+                else if (oddity_value == ORDINARY_POINT_LEFT_EDGE)
+                {  /* left hand side  */
+                    Vnew = 0.25 * (_mat.at(j - 1, 0).v + _mat.at(j + 1, 0).v + 2 * _mat.at(j, 1).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_RIGHT_EDGE)
+                {   /* right hand side */
+                    Vnew = 0.25 * (_mat.at(j + 1, width - 1).v + _mat.at(j - 1, width - 1).v + 2 * _mat.at(j, width - 2).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_TOP_EDGE)
+                { /* top row */ 
+                    Vnew = 0.25 * (_mat.at(0, i - 1).v + _mat.at(0, i + 1).v + 2 * _mat.at(1, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_BOTTOM_EDGE)
+                {   /* bottom row */ 
+                    Vnew = 0.25 * (_mat.at(height - 1, i - 1).v + _mat.at(height - 1, i + 1).v + 2 * _mat.at(height - 2, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value >= DIFFERENT_DIELECTRIC_ABOVE_AND_RIGHT && oddity_value < UNDEFINED_ODDITY)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = (Va + Vb + Vl + Vr) / 4.0;
+                    node.v = g * Vnew + ((float)1 - g) * node.v;
+                }
+
+                /* I'm not sure the following equations, which compute the v  
+                where there is a metal around are okay. One line of thought would 
+                say that the same equations as normal  i.e.
+                    v_new=(v(i+1,j_+v(i-1,j)+v(i,j-1)+v(i,j+1))/4 should be used
+                but then since the electric field across the metal surface is zero,
+                the equation that was used to derrive  that equation is not valid.
+
+                Another thought of mine is that v near a metal will be more affected
+                by the metal than the dielectric, since the nearest part of the metal is at
+                at the same v as the node, whereas for a dielectric is less so. Hence
+                the following seems a sensible solution. Since the metal will have twice 
+                the effect of a dielectric, the v at i,j should be weighted such
+                that its effect is more strongly affected by the metal. This seems to 
+                produce reasonably accurate results, but whether this is chance or not
+                I don't know. */
+
+                else if (oddity_value == METAL_ABOVE)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    Vnew = 0.25 * (4 * Va / 3 + 2 * Vb / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+        
+                    Vnew = 0.25 * (4 * Vb / 3 + 2 * Va / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 2 * Vr / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 2 * Vl / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 4 * Va / 3 + 2 * Vl / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Va / 3 + 2 * Vr / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Vb / 3 + 2 * Vr / 3 + 2 * Va / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vb / 3 + 4 * Vr / 3 + 2 * Va / 3 + 2 * Vl / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == UNDEFINED_ODDITY)
+                {
+                    fprintf(stderr,"Internal error in update_voltage_array.c\n");
+                    fprintf(stderr,"i=%d j=%d oddity[%d][%d]=%d\n", i, j, i,j, oddity_value);
+                    //exit(INTERNAL_ERROR);
+                    return;
+                } /* end if if an internal error */
+            } /* end of j loop */
+        }
+    }
+}
+
+void atlc3::update_voltage_array_fast_dielectric(int nmax)
+{
+    
+    std::uint8_t oddity_value;
+    float Va, Vb, Vl, Vr, ERa, ERb, ERl, ERr;
+    float Vnew, g;
+    
+    
+    std::int32_t width = _mat.cols();
+    std::int32_t height = _mat.rows();
+    
+    if (fabs(_r - 1.0) > 0.0001)
+    {
+        g = 1.0;
+    }
+    else
+    {
+        g = 1.2;
+    }
+    
+    for(std::int32_t n = 0; n  < nmax; ++n)
+    {
+        for (std::int32_t j = 0; j < height; j++)
+        {
+            for (std::int32_t i = 0; i < width; i++)
+            {
+                atlc3_node& node = _mat.at(j, i);
+                oddity_value = node.oddity;
+                    
+
+                if (oddity_value == ORDINARY_INTERIOR_POINT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    Vnew = (Va + Vb + Vl + Vr) / 4.0;
+                    node.v = g * Vnew + ((float)1 - g) * node.v;
+                }
+                else if (oddity_value == CONDUCTOR_ZERO_V)
+                {
+                    node.v = 0.0;
+                }
+                else if (oddity_value == CONDUCTOR_PLUS_ONE_V)
+                {
+                    node.v = 1.0;
+                }
+                else if (oddity_value == CONDUCTOR_MINUS_ONE_V)
+                {
+                    node.v = -1.0;
+                }
+                else if (oddity_value == TOP_LEFT_CORNER)
+                {  /* top left */
+                    Vnew = 0.5 * (_mat.at(0, 1).v + _mat.at(1, 0).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == TOP_RIGHT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(0, width - 2).v + _mat.at(1, width - 1).v);   /* top right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_LEFT_CORNER)
+                {
+                    Vnew = 0.5 * (_mat.at(height - 2, 0).v + _mat.at(height - 1, 1).v); /* bottom left */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == BOTTOM_RIGHT_CORNER)
+                {   
+                    Vnew = 0.5 * (_mat.at(height - 1, width - 2).v + _mat.at(height - 2, width - 1).v); /* bottom right */
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                /* Now the sides */
+                else if (oddity_value == ORDINARY_POINT_LEFT_EDGE)
+                {  /* left hand side  */
+                    Vnew = 0.25 * (_mat.at(j - 1, 0).v + _mat.at(j + 1, 0).v + 2 * _mat.at(j, 1).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_RIGHT_EDGE)
+                {   /* right hand side */
+                    Vnew = 0.25 * (_mat.at(j + 1, width - 1).v + _mat.at(j - 1, width - 1).v + 2 * _mat.at(j, width - 2).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_TOP_EDGE)
+                { /* top row */ 
+                    Vnew = 0.25 * (_mat.at(0, i - 1).v + _mat.at(0, i + 1).v + 2 * _mat.at(1, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == ORDINARY_POINT_BOTTOM_EDGE)
+                {   /* bottom row */ 
+                    Vnew = 0.25 * (_mat.at(height - 1, i - 1).v + _mat.at(height - 1, i + 1).v + 2 * _mat.at(height - 2, i).v);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+
+                /* I'm not sure the following equations, which compute the v  
+                where there is a metal around are okay. One line of thought would 
+                say that the same equations as normal  i.e.
+                    v_new=(v(i+1,j_+v(i-1,j)+v(i,j-1)+v(i,j+1))/4 should be used
+                but then since the electric field across the metal surface is zero,
+                the equation that was used to derrive  that equation is not valid.
+
+                Another thought of mine is that v near a metal will be more affected
+                by the metal than the dielectric, since the nearest part of the metal is at
+                at the same v as the node, whereas for a dielectric is less so. Hence
+                the following seems a sensible solution. Since the metal will have twice 
+                the effect of a dielectric, the v at i,j should be weighted such
+                that its effect is more strongly affected by the metal. This seems to 
+                produce reasonably accurate results, but whether this is chance or not
+                I don't know. */
+
+                else if (oddity_value == METAL_ABOVE)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    Vnew = 0.25 * (4 * Va / 3 + 2 * Vb / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+        
+                    Vnew = 0.25 * (4 * Vb / 3 + 2 * Va / 3 + Vl + Vr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 2 * Vr / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 2 * Vl / 3 + Va + Vb);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vr / 3 + 4 * Va / 3 + 2 * Vl / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_ABOVE_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Va / 3 + 2 * Vr / 3 + 2 * Vb / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_LEFT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vl / 3 + 4 * Vb / 3 + 2 * Vr / 3 + 2 * Va / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+                else if (oddity_value == METAL_BELOW_AND_RIGHT)
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+
+                    Vnew = 0.25 * (4 * Vb / 3 + 4 * Vr / 3 + 2 * Va / 3 + 2 * Vl / 3);
+                    node.v = g * Vnew + (1 - g) * node.v;
+                }
+
+                /* Again, when there is a change of permittivity, my equations may
+                (probably are wrong). My logic is that if there's and RF field,
+                the impedance is inversly proportional to Er. So if the material
+                above a node is of a higher permittivity, then the 
+                v will be closer to that of the node above, becuase of this.
+                The same applies for other directions of change in Er. */
+
+
+                else
+                {
+                    Va = _mat.at(j - 1, i).v;
+                    Vb = _mat.at(j + 1, i).v;
+                    Vl = _mat.at(j, i - 1).v;
+                    Vr = _mat.at(j, i + 1).v;
+                    
+                    ERa = _mat.at(j - 1, i).er;
+                    ERb = _mat.at(j + 1, i).er;
+                    ERl = _mat.at(j, i - 1).er;
+                    ERr = _mat.at(j, i + 1).er;
+
+                    Vnew = (Va * ERa + Vb * ERb + Vl * ERl + Vr * ERr) / (ERa + ERb + ERl + ERr);
+                    node.v = g * Vnew + (1 - g) * node.v;
+
                 } /* end if if an internal error */
             } /* end of j loop */
         }
@@ -1635,6 +2197,15 @@ void atlc3::print_data_for_directional_couplers()
     }
 }
 
+
+void atlc3::print_data_for_directional_couplers(float L_plus_vacuum, float C_plus, float L_minus_vacuum, float C_minus)
+{
+    printf("%s C1= %6.1f pF/m, C12= %6.1f pF/m C21= %6.1f pF/m C2= %6.1f pF/m "
+            "L1= %6.1f nH/m L12= %6.1f nH/m L21= %6.1f nH/m L2= %6.1f nH/m VERSION= %s\n",
+            _inputfile_filename.c_str(), C_plus * 1e12, (_Ceven - _Codd) * 0.5  * 1e12, (_Ceven - _Codd) * 0.5  * 1e12, C_minus * 1e12,
+            L_plus_vacuum * 1e9, (_Leven_vacuum - _Lodd_vacuum) * 0.5 * 1e9, (_Leven_vacuum - _Lodd_vacuum) * 0.5 * 1e9, L_minus_vacuum * 1e9,
+            PACKAGE_VERSION);
+}
 
 
 /* Write the following files, assuming an input of example.bmp 

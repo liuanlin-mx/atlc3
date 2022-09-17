@@ -100,7 +100,7 @@ private:
         float er;
         float v;
     };
-    
+
     struct pixels
     {
         int red;          /* +1 V */
@@ -126,6 +126,8 @@ public:
     bool setup_arrays(const matrix_rgb& img);
     bool set_oddity_value();
     void do_fd_calculation();
+    void do_tl_calculation();
+    void do_coupler_calculation();
     
     void set_inputfile_filename(const char *filename)
     {
@@ -165,6 +167,10 @@ public:
     float finite_difference_single_threaded();
     void update_voltage_array(int nmax, int imin, int imax, int jmin, int jmax);
     void update_voltage_array_fast(int nmax);
+    void update_voltage_array_fast_ignore_dielectric(int nmax);
+    void update_voltage_array_fast_ignore_dielectric2(int nmax);
+    void update_voltage_array_fast_dielectric(int nmax);
+    void update_voltage_array_int(int nmax);
     
     void swap_conductor_voltages();
     
@@ -178,6 +184,7 @@ public:
     
     void print_data_for_two_conductor_lines();
     void print_data_for_directional_couplers();
+    void print_data_for_directional_couplers(float L_plus_vacuum, float C_plus, float L_minus_vacuum, float C_minus);
     void write_fields(std::string name = "", std::int32_t zero_elementsQ = ZERO_ELEMENTS_FIRST);
     void find_maximum_values(struct max_values *maximum_values, int zero_elementsQ);
     void calculate_colour_data(float x, float xmax, int w, int h, int image_type,
