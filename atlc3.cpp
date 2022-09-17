@@ -469,8 +469,9 @@ void atlc3::do_fd_calculation()
             {
                 if (mat.at(row, col).cell_type == CONDUCTOR_MINUS_ONE_V)
                 {
-                    _mat.at(row, col).cell_type = DIELECTRIC;
-                    _mat.at(row, col).er = 1.0;
+                    _mat.at(row, col).cell_type = CONDUCTOR_ZERO_V;
+                    _mat.at(row, col).er = METAL_ER;
+                    _mat.at(row, col).v = 0;
                 }
             }
         }
@@ -488,13 +489,13 @@ void atlc3::do_fd_calculation()
                 if (mat.at(row, col).cell_type == CONDUCTOR_MINUS_ONE_V)
                 {
                     _mat.at(row, col).cell_type = CONDUCTOR_PLUS_ONE_V;
-                    _mat.at(row, col).er = 0;
+                    _mat.at(row, col).er = METAL_ER;
                     _mat.at(row, col).v = 1;
                 }
                 else if (mat.at(row, col).cell_type == CONDUCTOR_PLUS_ONE_V)
                 {
-                    _mat.at(row, col).cell_type = DIELECTRIC;
-                    _mat.at(row, col).er = 1.0;
+                    _mat.at(row, col).cell_type = CONDUCTOR_ZERO_V;
+                    _mat.at(row, col).er = METAL_ER;
                     _mat.at(row, col).v = 0;
                 }
             }
